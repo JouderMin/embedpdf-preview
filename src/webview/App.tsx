@@ -199,6 +199,7 @@ export function App() {
     <div className="embedpdf-root">
       <PDFViewer
         config={config}
+        style={{ width: '100%', height: '100%' }}
         onInit={(container) => {
           containerRef.current = container;
           container.setTheme(theme);
