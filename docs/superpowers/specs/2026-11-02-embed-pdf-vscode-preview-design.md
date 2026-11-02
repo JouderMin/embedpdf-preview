@@ -11,7 +11,7 @@
 成功的标准有三条：
 
 1. 双击 `.pdf` 直接进入预览，不经过其他扩展。
-2. 文件保存后 1 秒内重载完成，页面停在重载前的那一页。计量口径【待补：PDF 规模与计时的起止点】。
+2. 文件保存后 1 秒内重载完成，页面停在重载前的那一页。验收用 20 页以内、5 MB 以内的 PDF；从保存事件算到跳页完成。
 3. 预览过程不发任何网络请求，断网可用。
 
 ## 2 非目标与反目标
@@ -38,6 +38,7 @@
 - 扩展运行在 VS Code webview 中，webview 默认没有网络访问，CSP 需要显式放开 WASM 与字体。
 - 工作区路径含中文（`/Volumes/外置SSD/...`），路径处理不得假设 ASCII。
 - VS Code 版本 1.85 及以上，Node.js 20。
+- 验收文档 20 页以内、5 MB 以内。超过这个规模不保证 1 秒。
 - 打包体积约 26 MB：PDFium WASM 4.6 MB，字体 18 MB，界面代码约 3 MB。
 
 ## 4 方案
@@ -62,6 +63,7 @@ src/extension/          扩展端，Node.js 环境
   pdfEditorProvider.ts  CustomReadonlyEditorProvider，管理每个编辑器的生命周期
   reloadController.ts   文件监听、去抖、重载编排
   pageState.ts          按文件 URI 读写页码
+  association.ts        “设为默认”命令与首次打开通知
   webviewHtml.ts        生成 HTML、CSP、资源 URI、nonce
 src/webview/            webview 端，浏览器环境
   main.tsx              React 入口
@@ -189,6 +191,17 @@ npm 脚本：
 
 Vite 输出固定文件名（`webview.js`、`webview.css`），因为扩展端的 HTML 需要在运行时拼资源 URI，无法读哈希文件名。
 
+### 5.11 默认关联
+
+多个扩展声明 `.pdf` 时，VS Code 首次打开让用户选择并记住。本扩展加两条入口：
+
+- 命令 `embedpdf.setAsDefault`：把 `workbench.editorAssociations` 的 `*.pdf` 写到用户设置，值为 `embedpdf.preview`。写入前弹确认框，说明这会改变其他 PDF 扩展的打开行为。
+- 首次打开时检查：`workbench.editorAssociations` 里 `*.pdf` 不是本扩展时，发一次通知“PDF 预览已安装，设为默认？”。通知用 `globalState` 记已读，只出现一次。
+
+不静默修改用户设置。用户拒绝后，仍可按命令提示，或自行在设置里改。
+
+说明：VS Code 没有“注册即默认”的机制，多扩展竞争时只能靠关联设置或用户首次选择。写入用户设置需要用户确认，因此放在命令里。
+
 ## 6 验证
 
 单元测试覆盖纯逻辑：
@@ -210,6 +223,8 @@ Vite 输出固定文件名（`webview.js`、`webview.css`），因为扩展端�
 6. 打开截断的 PDF，确认显示错误，不崩溃。
 7. 用临时文件加改名的工具替换 PDF，确认只重载一次、不出现删除提示。
 8. 同一 PDF 已在预览中时再双击，确认聚焦已有编辑器，不新建第二个视图。
+9. 执行“设为默认”命令，确认 `workbench.editorAssociations` 写入，双击 `.pdf` 直接进预览。
+10. 首次打开时未设默认，确认通知只出现一次。
 
 ## 7 可自行决定的事项
 
@@ -228,9 +243,9 @@ Vite 输出固定文件名（`webview.js`、`webview.css`），因为扩展端�
 2. worker 模式下 WASM 与字体在 worker 内加载，CSP 与 `vscode-webview-resource` 协议可能不支持。第一版关闭 worker。
 3. 自带界面的分类名是字符串。文档只给了少量示例，包内清单已提取到 `document-*`、`annotation*`、`redaction*` 等名称，精确集合需核实。
 4. `retainContextWhenHidden` 让后台标签页保留 DOM，内存占用随打开的 PDF 数量增长。第一版开启，因为页码与缩放不丢的收益更大。
-5. 默认关联存在竞争。本机已装 `mathematic.vscode-pdf`、`latex-pdf-preview`、`lilypond-pdf-preview`，`latex-workshop` 另有外置查看器。多个扩展都声明 `.pdf` 时，VS Code 首次打开会让用户选择并记住，本扩展无法单方面成为默认。第 1 条成功标准能否成立，取决于用户是否选中本扩展。是否增加“设为默认”引导命令，待确认。
+5. 默认关联存在竞争。本机已装 `mathematic.vscode-pdf`、`latex-pdf-preview`、`lilypond-pdf-preview`，`latex-workshop` 另有外置查看器。多个扩展都声明 `.pdf` 时，VS Code 首次打开会让用户选择并记住。已定用命令加一次性通知引导，用户拒绝或以后再装扩展时，关联可能被改回。
 6. 单视图策略会让读者以为新编辑器组里没打开成功。需要在聚焦已有编辑器时给出提示。
-7. 性能指标未定。全量读盘、structured clone 整份字节、整份重解析都在主线程完成，目标文档若是百页以上，1 秒可能无法达到。若规模超出，需加预读或分级策略，或回到 worker 方案。
+7. 性能只对 20 页内、5 MB 内的文档承诺。更大文档仍能工作，但不保证 1 秒。全量读盘、structured clone 整份字节、整份重解析都在主线程完成。实测若超时，需加预读或分级策略，或回到 worker 方案。
 
 ## 9 已定事项
 
@@ -246,8 +261,5 @@ Vite 输出固定文件名（`webview.js`、`webview.css`），因为扩展端�
 8. 重载两阶段提交，失败回滚到旧文档与旧页。
 9. 每个 URI 只允许一个预览视图。
 10. 去抖 300 毫秒，删除宽限 1.5 秒，解析失败重试 3 次。
-
-以下两项等用户答复后补入：
-
-- 验收 PDF 的规模与“1 秒”的计量口径。
-- 默认关联是否要求本扩展成为默认，以及是否加引导命令。
+11. 验收规模：20 页以内、5 MB 以内；1 秒从保存事件算到跳页完成。
+12. 默认关联靠命令与一次性通知引导，不静默改用户设置。
