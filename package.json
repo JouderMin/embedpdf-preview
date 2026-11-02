@@ -6,6 +6,14 @@
   "publisher": "embedpdf-preview",
   "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JouderMin/embedpdf-preview.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JouderMin/embedpdf-preview/issues"
+  },
+  "homepage": "https://github.com/JouderMin/embedpdf-preview#readme",
   "engines": {
     "vscode": "^1.85.0",
     "node": ">=20"
