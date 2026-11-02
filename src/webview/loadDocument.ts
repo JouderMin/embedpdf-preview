@@ -41,11 +41,15 @@ export interface ScrollMetricsLike {
   scrollOffset: { x: number; y: number };
   pageVisibilityMetrics: Array<{
     pageNumber: number;
-    /** 可见交集顶点相对视口顶部的偏移（缩放后的像素）。 */
+    /** 可见交集顶点相对视口左侧/顶部的偏移（缩放后的像素）。 */
+    viewportX: number;
     viewportY: number;
     scaled: {
-      /** 可见交集顶点相对页顶的偏移（缩放后的像素）。 */
+      /** 可见交集顶点相对页左侧/顶部的偏移（缩放后的像素）。 */
+      pageX: number;
       pageY: number;
+      /** 页面实际渲染比例；优先用它换算像素偏移。 */
+      scale: number;
     };
   }>;
 }
@@ -71,8 +75,12 @@ export interface ZoomCapabilityLike {
 /** 重载前要保留的阅读状态：页码、页内像素偏移、缩放层级。 */
 export interface ViewState {
   page: number;
+  /** 视口左侧相对页左的像素偏移。 */
+  offsetX?: number;
   /** 视口顶部相对页顶的像素偏移；负数表示停在页间空隙。 */
   offsetY?: number;
+  /** 实际渲染比例，优先取 metrics.scaled.scale，拿不到时回退 zoom.currentZoomLevel。 */
+  scale?: number;
   zoom?: {
     level: ZoomLevel;
     /** 记录偏移时使用的实际比例，用于把像素换算成页坐标。 */
@@ -169,7 +177,9 @@ export function captureViewState(
   fallbackPage: number,
 ): ViewState {
   let page = Number.isFinite(fallbackPage) && fallbackPage >= 1 ? Math.trunc(fallbackPage) : 1;
+  let offsetX = 0;
   let offsetY = 0;
+  let pageScale: number | undefined;
 
   try {
     const scope = scroll.forDocument(documentId);
@@ -180,9 +190,16 @@ export function captureViewState(
     const metrics = scope.getMetrics();
     const visibility = metrics.pageVisibilityMetrics.find((item) => item.pageNumber === page);
     if (visibility) {
-      const candidate = visibility.scaled.pageY - visibility.viewportY;
-      if (Number.isFinite(candidate)) {
-        offsetY = candidate;
+      const candidateX = visibility.scaled.pageX - visibility.viewportX;
+      const candidateY = visibility.scaled.pageY - visibility.viewportY;
+      if (Number.isFinite(candidateX)) {
+        offsetX = candidateX;
+      }
+      if (Number.isFinite(candidateY)) {
+        offsetY = candidateY;
+      }
+      if (Number.isFinite(visibility.scaled.scale) && visibility.scaled.scale > 0) {
+        pageScale = visibility.scaled.scale;
       }
     }
   } catch {
@@ -204,7 +221,13 @@ export function captureViewState(
     // 缩放插件不可用或状态未就绪时只恢复页码。
   }
 
-  return { page, offsetY, zoom: zoomState };
+  // R12-1：metrics 的页面实际比例优先；zoom.currentZoomLevel 只在拿不到时兜底。
+  const scale = pageScale ?? zoomState?.scale;
+  if (zoomState && scale !== undefined) {
+    zoomState = { ...zoomState, scale };
+  }
+
+  return { page, offsetX, offsetY, scale, zoom: zoomState };
 }
 
 /**
@@ -322,18 +345,24 @@ export async function applyNewDocument(
       }
     }
 
-    const hasOffset = typeof previous?.offsetY === 'number';
+    const hasOffsetX = typeof previous?.offsetX === 'number';
+    const hasOffsetY = typeof previous?.offsetY === 'number';
+    const offsetX =
+      hasOffsetX && Number.isFinite(previous.offsetX) ? (previous.offsetX as number) : 0;
     const offsetY =
-      hasOffset && Number.isFinite(previous.offsetY) ? (previous.offsetY as number) : 0;
+      hasOffsetY && Number.isFinite(previous.offsetY) ? (previous.offsetY as number) : 0;
+    const recordedScale = previous?.scale ?? previous?.zoom?.scale;
     const scale =
-      previous?.zoom && Number.isFinite(previous.zoom.scale) && previous.zoom.scale > 0
-        ? previous.zoom.scale
+      typeof recordedScale === 'number' && Number.isFinite(recordedScale) && recordedScale > 0
+        ? recordedScale
         : 1;
     scrollScope.scrollToPage({
       pageNumber: page,
       behavior: 'instant',
       // pageCoordinates 是未缩放的页坐标；把像素偏移换算回页坐标，恢复时再乘新比例。
-      ...(hasOffset ? { pageCoordinates: { x: 0, y: offsetY / scale } } : {}),
+      ...(hasOffsetX || hasOffsetY
+        ? { pageCoordinates: { x: offsetX / scale, y: offsetY / scale } }
+        : {}),
     });
 
     if (input.previous) {

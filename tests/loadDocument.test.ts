@@ -69,7 +69,12 @@ function setup(
     currentPage,
     scrollOffset: { x: 0, y: 0 },
     pageVisibilityMetrics: [
-      { pageNumber: currentPage, viewportY: 0, scaled: { pageY: 0 } },
+      {
+        pageNumber: currentPage,
+        viewportX: 0,
+        viewportY: 0,
+        scaled: { pageX: 0, pageY: 0, scale: 1 },
+      },
     ],
   };
   let layoutHandler: ((event: LayoutEvent) => void) | undefined;
@@ -317,7 +322,14 @@ describe('applyNewDocument', () => {
 
 describe('重载后的缩放与页内位置', () => {
   test('captureViewState 区分 fit 模式与数字比例', () => {
-    const { scroll } = setup({ totalPages: 10, currentPage: 2 });
+    const metrics: ScrollMetricsLike = {
+      currentPage: 2,
+      scrollOffset: { x: 0, y: 0 },
+      pageVisibilityMetrics: [
+        { pageNumber: 2, viewportX: 0, viewportY: 0, scaled: { pageX: 0, pageY: 0, scale: 1.25 } },
+      ],
+    };
+    const { scroll } = setup({ totalPages: 10, currentPage: 2, metrics });
     const { zoom } = setupZoom('fit-page', 1.25);
 
     expect(captureViewState(scroll, zoom, 'old', 2)).toMatchObject({
@@ -335,6 +347,7 @@ describe('重载后的缩放与页内位置', () => {
         previous: {
           documentId: 'old',
           page: 5,
+          offsetX: 150,
           offsetY: 300,
           zoom: { level: 1.5, scale: 1.5 },
         },
@@ -352,7 +365,63 @@ describe('重载后的缩放与页内位置', () => {
     expect(scrollToPage).toHaveBeenCalledWith({
       pageNumber: 5,
       behavior: 'instant',
+      pageCoordinates: { x: 100, y: 200 },
+    });
+  });
+
+  test('metrics 的 scaled.scale 优先于 zoom.currentZoomLevel', async () => {
+    const metrics: ScrollMetricsLike = {
+      currentPage: 5,
+      scrollOffset: { x: 0, y: 0 },
+      pageVisibilityMetrics: [
+        { pageNumber: 5, viewportX: 0, viewportY: 0, scaled: { pageX: 0, pageY: 400, scale: 2 } },
+      ],
+    };
+    const { manager, scroll, scrollToPage } = setup({ totalPages: 10, currentPage: 5, metrics });
+    const { zoom } = setupZoom(1.5, 1.5);
+    const captured = captureViewState(scroll, zoom, 'old', 5);
+
+    expect(captured).toMatchObject({
+      page: 5,
+      offsetY: 400,
+      scale: 2,
+      zoom: { level: 1.5, scale: 2 },
+    });
+    expect(captureViewState(scroll, undefined, 'old', 5)).toMatchObject({ scale: 2 });
+
+    await apply(manager, scroll, {
+      previous: { documentId: 'old', ...captured },
+      targetPage: 5,
+      zoom,
+    });
+
+    expect(scrollToPage).toHaveBeenCalledWith({
+      pageNumber: 5,
+      behavior: 'instant',
       pageCoordinates: { x: 0, y: 200 },
+    });
+  });
+
+  test('零偏移仍明确传 pageCoordinates 0', async () => {
+    const { manager, scroll, scrollToPage } = setup({ totalPages: 10 });
+    const { zoom } = setupZoom(1.5, 1.5);
+
+    await apply(manager, scroll, {
+      previous: {
+        documentId: 'old',
+        page: 5,
+        offsetX: 0,
+        offsetY: 0,
+        zoom: { level: 1.5, scale: 1.5 },
+      },
+      targetPage: 5,
+      zoom,
+    });
+
+    expect(scrollToPage).toHaveBeenCalledWith({
+      pageNumber: 5,
+      behavior: 'instant',
+      pageCoordinates: { x: 0, y: 0 },
     });
   });
 
@@ -403,7 +472,9 @@ describe('重载后的缩放与页内位置', () => {
     const metrics: ScrollMetricsLike = {
       currentPage: 2,
       scrollOffset: { x: 0, y: 1000 },
-      pageVisibilityMetrics: [{ pageNumber: 2, viewportY: 80, scaled: { pageY: 40 } }],
+      pageVisibilityMetrics: [
+        { pageNumber: 2, viewportX: 0, viewportY: 80, scaled: { pageX: 0, pageY: 40, scale: 1 } },
+      ],
     };
     const { manager, scroll, scrollToPage } = setup({
       totalPages: 10,

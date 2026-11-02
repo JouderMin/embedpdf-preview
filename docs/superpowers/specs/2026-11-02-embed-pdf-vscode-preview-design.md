@@ -106,10 +106,10 @@ webview 到扩展端：
 
 1. webview 收到 `document` 消息。
 2. 从 `registry.getCapabilityProvider('document-manager').provides()` 取文档管理能力，从 `getCapabilityProvider('scroll').provides()` 取滚动能力，从 `getCapabilityProvider('zoom').provides()` 取缩放能力。
-3. 记录旧阅读状态：页码 `P`（`scroll.forDocument(当前文档 ID).getCurrentPage()`，消息里的 `page` 兜底）、页内垂直偏移、缩放。页内偏移用 `scroll.getMetrics().pageVisibilityMetrics` 的 `scaled.pageY - viewportY` 计算；负数表示视口停在页间空隙。缩放同时记录 `zoomLevel`（数字百分比或 `fit-page`/`fit-width`/`automatic` 模式）与 `currentZoomLevel`（实际比例）。
+3. 记录旧阅读状态：页码 `P`（`scroll.forDocument(当前文档 ID).getCurrentPage()`，消息里的 `page` 兜底）、页内水平/垂直偏移、缩放。偏移用 `scroll.getMetrics().pageVisibilityMetrics` 计算：`offsetX = scaled.pageX - viewportX`，`offsetY = scaled.pageY - viewportY`；`offsetY` 为负数表示视口停在页间空隙。实际比例优先取 `scaled.scale`，拿不到时回退 `zoom.currentZoomLevel`。缩放同时记录 `zoomLevel`（数字百分比或 `fit-page`/`fit-width`/`automatic` 模式）与实际比例。
 4. 先订阅 `scroll.onLayoutReady`，筛出 `documentId` 等于新文档且 `isInitial` 为真的第一次事件。
 5. 调用 `documentManager.openDocumentBuffer({ buffer, name, autoActivate: true })`，等 task 完成，得到新文档 ID。
-6. 在新文档布局就绪后先恢复缩放：`zoom.forDocument(新文档 ID).requestZoom(记录的 zoomLevel)`。再恢复位置：把记录的像素偏移除以记录时的实际比例，得到未缩放页坐标，调用 `scroll.forDocument(新文档 ID).scrollToPage({ pageNumber: P, pageCoordinates: { x: 0, y: 偏移 / 旧比例 }, behavior: 'instant' })`。
+6. 在新文档布局就绪后先恢复缩放：`zoom.forDocument(新文档 ID).requestZoom(记录的 zoomLevel)`。再恢复位置：把记录的像素偏移除以记录时的实际比例，得到未缩放页坐标，调用 `scroll.forDocument(新文档 ID).scrollToPage({ pageNumber: P, pageCoordinates: { x: offsetX / 旧比例, y: offsetY / 旧比例 }, behavior: 'instant' })`。
 7. 跳页完成后调用 `documentManager.closeDocument(旧文档 ID)`，释放旧文档内存。
 
 页间位置（视口停在两页之间）就是页坐标为负或超出页高的情况，按原页坐标恢复即可，不能改成“页中央”。页码被夹到末页时，偏移仍按原值应用；越界位置由滚动容器收敛到最近合法位置，不报错。跨 VS Code 重启只持久化页码，不持久化缩放与页内偏移。
