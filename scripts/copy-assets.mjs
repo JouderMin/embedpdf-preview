@@ -37,11 +37,14 @@ const fonts = [];
 for (const dir of FONT_DIRS) {
   const result = await collectFonts(dir);
   missing.push(...result.missing);
+  if (result.missing.length === 0 && result.fonts.length === 0) {
+    missing.push(`${dir}（目录存在，但没有 .otf/.ttf 字体）`);
+  }
   fonts.push(...result.fonts);
 }
 
 if (missing.length > 0) {
-  console.error('copy-assets: 缺少以下资源，请先运行 npm install：');
+  console.error('copy-assets: 缺少以下资源，请先运行 pnpm install：');
   for (const target of missing) {
     console.error(`  - ${target}`);
   }
