@@ -5,3 +5,4 @@ media/generated/
 *.vsix
 .pnpm-store/
 .agent-teams/
+docs/
