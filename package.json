@@ -1,0 +1,73 @@
+{
+  "name": "embedpdf-preview",
+  "displayName": "EmbedPDF PDF Preview",
+  "description": "在 VS Code 内预览 PDF；文件变化后重载并回到原页。",
+  "version": "0.1.0",
+  "publisher": "embedpdf-preview",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onCustomEditor:embedpdf.preview"
+  ],
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "embedpdf.preview",
+        "displayName": "EmbedPDF 预览",
+        "selector": [
+          {
+            "filenamePattern": "*.pdf"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "embedpdf.reload",
+        "title": "重载预览",
+        "category": "EmbedPDF"
+      },
+      {
+        "command": "embedpdf.setAsDefault",
+        "title": "将 PDF 预览设为默认",
+        "category": "EmbedPDF"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node scripts/build-extension.mjs && vite build && node scripts/copy-assets.mjs",
+    "watch": "node scripts/watch.mjs",
+    "test": "vitest run",
+    "package": "vsce package --no-dependencies -o dist/embedpdf-preview.vsix"
+  },
+  "dependencies": {
+    "@embedpdf/fonts-latin": "1.0.0",
+    "@embedpdf/fonts-sc": "1.0.0",
+    "@embedpdf/pdfium": "2.15.1",
+    "@embedpdf/react-pdf-viewer": "2.15.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/vscode": "^1.85.0",
+    "@vitejs/plugin-react": "4.7.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3",
+    "vite": "6.4.5",
+    "vitest": "3.2.7"
+  }
+}
