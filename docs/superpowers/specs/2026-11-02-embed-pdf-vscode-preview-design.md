@@ -105,12 +105,14 @@ webview 到扩展端：
 重载在 webview 内完成，不重建 webview，也不重新初始化 PDFium。
 
 1. webview 收到 `document` 消息。
-2. 从 `registry.getCapabilityProvider('document-manager').provides()` 取文档管理能力，从 `getCapabilityProvider('scroll').provides()` 取滚动能力。
-3. 用 `scroll.forDocument(当前文档 ID).getCurrentPage()` 记录旧页 `P`。消息里的 `page` 作为兜底。
+2. 从 `registry.getCapabilityProvider('document-manager').provides()` 取文档管理能力，从 `getCapabilityProvider('scroll').provides()` 取滚动能力，从 `getCapabilityProvider('zoom').provides()` 取缩放能力。
+3. 记录旧阅读状态：页码 `P`（`scroll.forDocument(当前文档 ID).getCurrentPage()`，消息里的 `page` 兜底）、页内垂直偏移、缩放。页内偏移用 `scroll.getMetrics().pageVisibilityMetrics` 的 `scaled.pageY - viewportY` 计算；负数表示视口停在页间空隙。缩放同时记录 `zoomLevel`（数字百分比或 `fit-page`/`fit-width`/`automatic` 模式）与 `currentZoomLevel`（实际比例）。
 4. 先订阅 `scroll.onLayoutReady`，筛出 `documentId` 等于新文档且 `isInitial` 为真的第一次事件。
 5. 调用 `documentManager.openDocumentBuffer({ buffer, name, autoActivate: true })`，等 task 完成，得到新文档 ID。
-6. 在新文档布局就绪后调用 `scroll.forDocument(新文档 ID).scrollToPage({ pageNumber: P, behavior: 'instant' })`。
+6. 在新文档布局就绪后先恢复缩放：`zoom.forDocument(新文档 ID).requestZoom(记录的 zoomLevel)`。再恢复位置：把记录的像素偏移除以记录时的实际比例，得到未缩放页坐标，调用 `scroll.forDocument(新文档 ID).scrollToPage({ pageNumber: P, pageCoordinates: { x: 0, y: 偏移 / 旧比例 }, behavior: 'instant' })`。
 7. 跳页完成后调用 `documentManager.closeDocument(旧文档 ID)`，释放旧文档内存。
+
+页间位置（视口停在两页之间）就是页坐标为负或超出页高的情况，按原页坐标恢复即可，不能改成“页中央”。页码被夹到末页时，偏移仍按原值应用；越界位置由滚动容器收敛到最近合法位置，不报错。跨 VS Code 重启只持久化页码，不持久化缩放与页内偏移。
 
 说明：先开新文档再关旧文档，避免预览区出现空白闪烁。旧文档关闭失败只记录日志，不影响新文档。
 
@@ -266,7 +268,7 @@ Vite 输出固定文件名（`webview.js`、`webview.css`），因为扩展端�
 请复核以下各项：
 
 1. 只读预览，关闭所有写入类功能。
-2. 恢复到页，不恢复页内像素偏移。
+2. 重载恢复页码、页内偏移与缩放；页间偏移也按页坐标恢复。跨重启只保留页码。
 3. 页码按文件 URI 存 `globalState`，跨重启保留。
 4. 第一版关闭 worker，主线程运行 PDFium。
 5. 字体只带简体常规与粗体、Latin 四款，不带繁体与日韩。

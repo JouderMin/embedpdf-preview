@@ -5,8 +5,10 @@ import type { HostToWebview, Theme } from '../shared/protocol';
 import { onHostMessage, postToHost } from './bridge';
 import {
   applyNewDocument,
+  captureViewState,
   type DocumentManagerCapability,
   type ScrollCapabilityLike,
+  type ZoomCapabilityLike,
 } from './loadDocument';
 import { createViewerConfig } from './viewerConfig';
 
@@ -41,15 +43,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function readPage(scroll: ScrollCapabilityLike, documentId: string, fallback: number): number {
-  try {
-    const page = scroll.forDocument(documentId).getCurrentPage();
-    return Number.isFinite(page) && page >= 1 ? Math.trunc(page) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 export function App() {
   const [theme, setTheme] = useState<Theme>('light');
   const [error, setError] = useState<{ kind: 'read' | 'render'; message: string } | null>(null);
@@ -57,6 +50,7 @@ export function App() {
   const containerRef = useRef<EmbedPdfContainer | null>(null);
   const managerRef = useRef<DocumentManagerRuntime | undefined>(undefined);
   const scrollRef = useRef<ScrollRuntime | undefined>(undefined);
+  const zoomRef = useRef<ZoomCapabilityLike | undefined>(undefined);
   const currentRef = useRef<{ documentId: string; page: number } | undefined>(undefined);
   const pendingRef = useRef<DocumentMessage | undefined>(undefined);
   const processingRef = useRef(false);
@@ -86,16 +80,20 @@ export function App() {
 
         const current = currentRef.current;
         const previous = current
-          ? { documentId: current.documentId, page: readPage(scroll, current.documentId, current.page) }
+          ? {
+              documentId: current.documentId,
+              ...captureViewState(scroll, zoomRef.current, current.documentId, current.page),
+            }
           : undefined;
 
         try {
           const result = await applyNewDocument({
             bytes: message.bytes,
             name: nameRef.current,
-            targetPage: message.page,
+            targetPage: previous?.page ?? message.page,
             manager,
             scroll,
+            zoom: zoomRef.current,
             previous,
           });
           currentRef.current = { documentId: result.documentId, page: result.page };
@@ -113,6 +111,7 @@ export function App() {
   const handleRegistryReady = (registry: Registry) => {
     managerRef.current = capabilityOf<DocumentManagerRuntime>(registry, 'document-manager');
     scrollRef.current = capabilityOf<ScrollRuntime>(registry, 'scroll');
+    zoomRef.current = capabilityOf<ZoomCapabilityLike>(registry, 'zoom');
 
     if (!managerRef.current || !scrollRef.current) {
       reportRender('PDF 查看器未就绪');

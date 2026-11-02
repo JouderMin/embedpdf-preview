@@ -27,7 +27,61 @@ export interface DocumentManagerCapability {
 
 export interface ScrollScopeLike {
   getCurrentPage(): number;
-  scrollToPage(options: { pageNumber: number; behavior: 'instant' }): void;
+  getMetrics(): ScrollMetricsLike;
+  scrollToPage(options: {
+    pageNumber: number;
+    behavior: 'instant';
+    pageCoordinates?: { x: number; y: number };
+  }): void;
+}
+
+/** scroll 插件 `getMetrics()` 中恢复阅读位置所需的最小字段。 */
+export interface ScrollMetricsLike {
+  currentPage: number;
+  scrollOffset: { x: number; y: number };
+  pageVisibilityMetrics: Array<{
+    pageNumber: number;
+    /** 可见交集顶点相对视口顶部的偏移（缩放后的像素）。 */
+    viewportY: number;
+    scaled: {
+      /** 可见交集顶点相对页顶的偏移（缩放后的像素）。 */
+      pageY: number;
+    };
+  }>;
+}
+
+export type ZoomLevel = number | 'automatic' | 'fit-page' | 'fit-width';
+
+export interface ZoomStateLike {
+  /** 用户选择的层级：数字是百分比式缩放，字符串是 fit 模式。 */
+  zoomLevel: ZoomLevel;
+  /** 当前实际缩放比例（fit 模式也算出的实际值）。 */
+  currentZoomLevel: number;
+}
+
+export interface ZoomScopeLike {
+  getState(): ZoomStateLike;
+  requestZoom(level: ZoomLevel): void;
+}
+
+export interface ZoomCapabilityLike {
+  forDocument(documentId: string): ZoomScopeLike;
+}
+
+/** 重载前要保留的阅读状态：页码、页内像素偏移、缩放层级。 */
+export interface ViewState {
+  page: number;
+  /** 视口顶部相对页顶的像素偏移；负数表示停在页间空隙。 */
+  offsetY?: number;
+  zoom?: {
+    level: ZoomLevel;
+    /** 记录偏移时使用的实际比例，用于把像素换算成页坐标。 */
+    scale: number;
+  };
+}
+
+export interface PreviousViewState extends ViewState {
+  documentId: string;
 }
 
 export interface ScrollCapabilityLike {
@@ -48,7 +102,8 @@ export interface ApplyNewDocumentInput {
   targetPage: number;
   manager: DocumentManagerCapability;
   scroll: ScrollCapabilityLike;
-  previous?: { documentId: string; page: number };
+  zoom?: ZoomCapabilityLike;
+  previous?: PreviousViewState;
   /** 等待新文档首屏布局的上限，防止损坏文档让界面永久挂起。 */
   layoutTimeoutMs?: number;
 }
@@ -103,8 +158,58 @@ async function closeQuietly(
 }
 
 /**
- * 加载一份新文档并回到原页。顺序：打开 → 等新文档首屏布局 → 跳到目标页 →
- * 关闭旧文档。任何一步失败都关闭新文档、保留旧文档。
+ * 读取当前阅读状态。页内偏移用 scroll 的可见性 metrics 计算：
+ * 视口顶相对页顶的像素 = scaled.pageY - viewportY。负数表示视口停在页间空隙。
+ * 缩放同时记录“层级”（数字或 fit 模式）与“实际比例”，恢复时不能把 fit 当成固定百分比。
+ */
+export function captureViewState(
+  scroll: ScrollCapabilityLike,
+  zoom: ZoomCapabilityLike | undefined,
+  documentId: string,
+  fallbackPage: number,
+): ViewState {
+  let page = Number.isFinite(fallbackPage) && fallbackPage >= 1 ? Math.trunc(fallbackPage) : 1;
+  let offsetY = 0;
+
+  try {
+    const scope = scroll.forDocument(documentId);
+    const current = scope.getCurrentPage();
+    if (Number.isFinite(current) && current >= 1) {
+      page = Math.trunc(current);
+    }
+    const metrics = scope.getMetrics();
+    const visibility = metrics.pageVisibilityMetrics.find((item) => item.pageNumber === page);
+    if (visibility) {
+      const candidate = visibility.scaled.pageY - visibility.viewportY;
+      if (Number.isFinite(candidate)) {
+        offsetY = candidate;
+      }
+    }
+  } catch {
+    // 读取位置失败时退化为“页首”，不影响重载本身。
+  }
+
+  let zoomState: ViewState['zoom'];
+  try {
+    const state = zoom?.forDocument(documentId).getState();
+    if (
+      state &&
+      typeof state.zoomLevel !== 'undefined' &&
+      Number.isFinite(state.currentZoomLevel) &&
+      state.currentZoomLevel > 0
+    ) {
+      zoomState = { level: state.zoomLevel, scale: state.currentZoomLevel };
+    }
+  } catch {
+    // 缩放插件不可用或状态未就绪时只恢复页码。
+  }
+
+  return { page, offsetY, zoom: zoomState };
+}
+
+/**
+ * 加载一份新文档并回到原页。顺序：打开 → 等新文档首屏布局 → 恢复缩放 →
+ * 按页内偏移跳页 → 关闭旧文档。任何一步失败都关闭新文档、保留旧文档。
  *
  * 注意两点：
  * - `openDocumentBuffer` 返回的外层 Task 只表示“已开始加载”，必须等其中的
@@ -205,7 +310,31 @@ export async function applyNewDocument(
     }
 
     const page = clampPage(input.targetPage, layout.totalPages);
-    input.scroll.forDocument(newDocumentId).scrollToPage({ pageNumber: page, behavior: 'instant' });
+    const scrollScope = input.scroll.forDocument(newDocumentId);
+    const previous = input.previous;
+
+    // 先恢复缩放：scrollToPage 的 pageCoordinates 会按当前 coreDoc.scale 缩放。
+    if (previous?.zoom && input.zoom) {
+      try {
+        input.zoom.forDocument(newDocumentId).requestZoom(previous.zoom.level);
+      } catch (error) {
+        console.warn('恢复缩放失败', error);
+      }
+    }
+
+    const hasOffset = typeof previous?.offsetY === 'number';
+    const offsetY =
+      hasOffset && Number.isFinite(previous.offsetY) ? (previous.offsetY as number) : 0;
+    const scale =
+      previous?.zoom && Number.isFinite(previous.zoom.scale) && previous.zoom.scale > 0
+        ? previous.zoom.scale
+        : 1;
+    scrollScope.scrollToPage({
+      pageNumber: page,
+      behavior: 'instant',
+      // pageCoordinates 是未缩放的页坐标；把像素偏移换算回页坐标，恢复时再乘新比例。
+      ...(hasOffset ? { pageCoordinates: { x: 0, y: offsetY / scale } } : {}),
+    });
 
     if (input.previous) {
       await closeQuietly(input.manager, input.previous.documentId, '关闭旧文档');

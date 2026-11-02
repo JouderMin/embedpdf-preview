@@ -1,9 +1,14 @@
 import { describe, expect, test, vi } from 'vitest';
 import {
   applyNewDocument,
+  captureViewState,
   type DocumentManagerCapability,
   type PdfTaskLike,
   type ScrollCapabilityLike,
+  type ScrollMetricsLike,
+  type ViewState,
+  type ZoomCapabilityLike,
+  type ZoomLevel,
 } from '../src/webview/loadDocument';
 
 interface LayoutEvent {
@@ -47,6 +52,8 @@ function setup(
   options: {
     totalPages?: number;
     previous?: { documentId: string; page: number };
+    currentPage?: number;
+    metrics?: ScrollMetricsLike;
     autoLayout?: boolean;
     replayOld?: LayoutEvent;
     engineFailure?: string;
@@ -57,18 +64,34 @@ function setup(
 ) {
   const calls: string[] = [];
   const totalPages = options.totalPages ?? 10;
+  const currentPage = options.currentPage ?? 1;
+  const metrics: ScrollMetricsLike = options.metrics ?? {
+    currentPage,
+    scrollOffset: { x: 0, y: 0 },
+    pageVisibilityMetrics: [
+      { pageNumber: currentPage, viewportY: 0, scaled: { pageY: 0 } },
+    ],
+  };
   let layoutHandler: ((event: LayoutEvent) => void) | undefined;
   let documentErrorHandler: ((event: { documentId: string; message: string }) => void) | undefined;
 
   const scrollToPage = vi.fn(
-    ({ pageNumber }: { pageNumber: number; behavior: 'instant' }) => {
-      calls.push(`scroll:${pageNumber}`);
+    (scrollOptions: {
+      pageNumber: number;
+      behavior: 'instant';
+      pageCoordinates?: { x: number; y: number };
+    }) => {
+      calls.push(`scroll:${scrollOptions.pageNumber}`);
       if (options.scrollThrows) {
         throw new Error('scroll failed');
       }
     },
   );
-  const scope = { getCurrentPage: vi.fn(() => 1), scrollToPage };
+  const scope = {
+    getCurrentPage: vi.fn(() => currentPage),
+    getMetrics: vi.fn(() => metrics),
+    scrollToPage,
+  };
   const forDocument = vi.fn(() => scope);
   const onLayoutReady = vi.fn((handler: (event: LayoutEvent) => void) => {
     layoutHandler = handler;
@@ -143,12 +166,22 @@ function setup(
   };
 }
 
+function setupZoom(level: ZoomLevel = 1, scale = 1) {
+  const requestZoom = vi.fn();
+  const getState = vi.fn(() => ({ zoomLevel: level, currentZoomLevel: scale }));
+  const scope = { getState, requestZoom };
+  const forDocument = vi.fn(() => scope);
+  const zoom: ZoomCapabilityLike = { forDocument };
+  return { zoom, requestZoom, getState, forDocument };
+}
+
 function apply(
   manager: DocumentManagerCapability,
   scroll: ScrollCapabilityLike,
   options: {
-    previous?: { documentId: string; page: number };
+    previous?: ViewState & { documentId: string };
     targetPage?: number;
+    zoom?: ZoomCapabilityLike;
   } = {},
 ) {
   return applyNewDocument({
@@ -157,6 +190,7 @@ function apply(
     targetPage: options.targetPage ?? 5,
     manager,
     scroll,
+    zoom: options.zoom,
     previous: options.previous,
   });
 }
@@ -278,5 +312,169 @@ describe('applyNewDocument', () => {
       page: 1,
     });
     expect(closeDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe('重载后的缩放与页内位置', () => {
+  test('captureViewState 区分 fit 模式与数字比例', () => {
+    const { scroll } = setup({ totalPages: 10, currentPage: 2 });
+    const { zoom } = setupZoom('fit-page', 1.25);
+
+    expect(captureViewState(scroll, zoom, 'old', 2)).toMatchObject({
+      page: 2,
+      zoom: { level: 'fit-page', scale: 1.25 },
+    });
+  });
+
+  test('150% 缩放下重载会先恢复缩放，再按页坐标恢复位置', async () => {
+    const { manager, scroll, scrollToPage, forDocument } = setup({ totalPages: 10 });
+    const { zoom, requestZoom, forDocument: zoomForDocument } = setupZoom(1.5, 1.5);
+
+    await expect(
+      apply(manager, scroll, {
+        previous: {
+          documentId: 'old',
+          page: 5,
+          offsetY: 300,
+          zoom: { level: 1.5, scale: 1.5 },
+        },
+        targetPage: 5,
+        zoom,
+      }),
+    ).resolves.toEqual({ documentId: 'new', page: 5 });
+
+    expect(zoomForDocument).toHaveBeenCalledWith('new');
+    expect(forDocument).toHaveBeenCalledWith('new');
+    expect(requestZoom).toHaveBeenCalledWith(1.5);
+    expect(requestZoom.mock.invocationCallOrder[0]).toBeLessThan(
+      scrollToPage.mock.invocationCallOrder[0],
+    );
+    expect(scrollToPage).toHaveBeenCalledWith({
+      pageNumber: 5,
+      behavior: 'instant',
+      pageCoordinates: { x: 0, y: 200 },
+    });
+  });
+
+  test('fit-page 按模式恢复，不写成固定比例', async () => {
+    const { manager, scroll } = setup({ totalPages: 10 });
+    const { zoom, requestZoom } = setupZoom('fit-page', 1.25);
+
+    await apply(manager, scroll, {
+      previous: {
+        documentId: 'old',
+        page: 2,
+        offsetY: 0,
+        zoom: { level: 'fit-page', scale: 1.25 },
+      },
+      targetPage: 2,
+      zoom,
+    });
+
+    expect(requestZoom).toHaveBeenCalledWith('fit-page');
+    expect(requestZoom).not.toHaveBeenCalledWith(1.25);
+  });
+
+  test('第 5 页页内偏移 300px 在 100% 下按 300 页坐标恢复', async () => {
+    const { manager, scroll, scrollToPage } = setup({ totalPages: 10 });
+    const { zoom } = setupZoom(1, 1);
+
+    await expect(
+      apply(manager, scroll, {
+        previous: {
+          documentId: 'old',
+          page: 5,
+          offsetY: 300,
+          zoom: { level: 1, scale: 1 },
+        },
+        targetPage: 5,
+        zoom,
+      }),
+    ).resolves.toEqual({ documentId: 'new', page: 5 });
+
+    expect(scrollToPage).toHaveBeenCalledWith({
+      pageNumber: 5,
+      behavior: 'instant',
+      pageCoordinates: { x: 0, y: 300 },
+    });
+  });
+
+  test('停在两页之间时保留负偏移，不跳到页中央', async () => {
+    const metrics: ScrollMetricsLike = {
+      currentPage: 2,
+      scrollOffset: { x: 0, y: 1000 },
+      pageVisibilityMetrics: [{ pageNumber: 2, viewportY: 80, scaled: { pageY: 40 } }],
+    };
+    const { manager, scroll, scrollToPage } = setup({
+      totalPages: 10,
+      currentPage: 2,
+      metrics,
+    });
+    const { zoom } = setupZoom(1, 1);
+    const captured = captureViewState(scroll, zoom, 'old', 2);
+
+    expect(captured).toMatchObject({ page: 2, offsetY: -40, zoom: { level: 1, scale: 1 } });
+
+    await expect(
+      apply(manager, scroll, {
+        previous: { documentId: 'old', ...captured },
+        targetPage: 2,
+        zoom,
+      }),
+    ).resolves.toEqual({ documentId: 'new', page: 2 });
+
+    expect(scrollToPage).toHaveBeenCalledWith({
+      pageNumber: 2,
+      behavior: 'instant',
+      pageCoordinates: { x: 0, y: -40 },
+    });
+    expect(scrollToPage.mock.calls[0][0].pageCoordinates?.y).not.toBe(0);
+  });
+
+  test('文档从 5 页变 3 页时夹到末页并应用偏移，不抛错', async () => {
+    const { manager, scroll, scrollToPage } = setup({ totalPages: 3 });
+    const { zoom } = setupZoom(1, 1);
+
+    await expect(
+      apply(manager, scroll, {
+        previous: {
+          documentId: 'old',
+          page: 5,
+          offsetY: 300,
+          zoom: { level: 1, scale: 1 },
+        },
+        targetPage: 5,
+        zoom,
+      }),
+    ).resolves.toEqual({ documentId: 'new', page: 3 });
+
+    expect(scrollToPage).toHaveBeenCalledWith({
+      pageNumber: 3,
+      behavior: 'instant',
+      pageCoordinates: { x: 0, y: 300 },
+    });
+  });
+
+  test('打开失败时不再请求缩放或滚动，旧文档保持不动', async () => {
+    const { manager, scroll, scrollToPage } = setup({
+      openFailure: new Error('limit reached'),
+    });
+    const { zoom, requestZoom } = setupZoom(1.5, 1.5);
+
+    await expect(
+      apply(manager, scroll, {
+        previous: {
+          documentId: 'old',
+          page: 5,
+          offsetY: 300,
+          zoom: { level: 1.5, scale: 1.5 },
+        },
+        targetPage: 5,
+        zoom,
+      }),
+    ).rejects.toThrow('limit reached');
+
+    expect(requestZoom).not.toHaveBeenCalled();
+    expect(scrollToPage).not.toHaveBeenCalled();
   });
 });
