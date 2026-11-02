@@ -230,7 +230,9 @@ grep -Rho "document-capture\|document-print\|annotation[^\"']*\|redaction[^\"']*
 node -e "const t=await import('@embedpdf/react-pdf-viewer'); console.log(Object.keys(t))"
 ```
 
-目标：得到 `PDFViewerConfig` 的 `theme` 字段形状、`disabledCategories` 的合法值与 `fontFallback` 字段名。把结论写进 `src/webview/viewerConfig.ts` 顶部注释（文件、行号或命令）。若 `theme` 不是 `{ colorScheme }`，按实际类型改测试断言。
+目标：得到 `PDFViewerConfig` 的 `theme` 字段形状、`disabledCategories` 的合法值、`fontFallback` 字段名，以及界面字体与印章两个字段（`fonts`、`stamp`）的键名。把结论写进 `src/webview/viewerConfig.ts` 顶部注释（文件、行号或命令）。若 `theme` 不是 `{ colorScheme }`，按实际类型改测试断言。
+
+另需确认 `@embedpdf/snippet` 是否在 `node_modules` 里：pnpm 无幽灵依赖，复制 `pdfium.wasm` 依赖它。不在就加进 dependencies。
 
 - [ ] **Step 2: 写失败的测试**
 
@@ -253,6 +255,13 @@ test('配置固定项', () => {
     { url: 'vscode-resource://f/NotoSansHans-Bold.otf', weight: 700 },
   ]);
 });
+test('配置不含任何外部域名，界面字体与印章已关闭', () => {
+  const config = createViewerConfig({ theme: 'light', wasmUrl: 'vscode-resource://w', fontBaseUrl: 'vscode-resource://f/' });
+  const text = JSON.stringify(config);
+  expect(text).not.toMatch(/googleapis|gstatic|jsdelivr|unpkg|default-stamps/i);
+  expect(text).not.toContain('http://');
+  expect(text).not.toContain('https://');
+});
 test('HTML 的 CSP 放开 wasm 与字体，且不放开 https', () => {
   const html = renderHtml({ cspSource: 'vscode-resource://x', scriptUri: 'vscode-resource://x/webview.js', styleUri: 'vscode-resource://x/webview.css', nonce: 'n1' });
   expect(html).toContain("script-src 'nonce-n1' 'wasm-unsafe-eval'");
@@ -264,7 +273,7 @@ test('HTML 的 CSP 放开 wasm 与字体，且不放开 https', () => {
 
 - [ ] **Step 3: 写最小代码**
 
-`viewerConfig` 按核实结果写；字体条目只用 GB2312 的两款与 `CYRILLIC`/`GREEK`/`VIETNAMESE` 复用 `NotoSans-{Regular,Italic,Bold,BoldItalic}.ttf`。`renderHtml` 输出 `<div id="root">`、带 nonce 的脚本标签、`font-src` 与 `media-src` 为 `cspSource`。
+`viewerConfig` 按核实结果写；字体条目只用 GB2312 的两款与 `CYRILLIC`/`GREEK`/`VIETNAMESE` 复用 `NotoSans-{Regular,Italic,Bold,BoldItalic}.ttf`。界面字体与签名字体设为 `null`（`fonts: { ui: null, signature: null }`，键名按核实结果），印章清单设为空（`stamp: { manifests: [] }`），避免 Google Fonts 与 `@embedpdf/default-stamps` 的外网请求。`renderHtml` 输出 `<div id="root">`、带 nonce 的脚本标签、`font-src` 与 `media-src` 为 `cspSource`。
 
 - [ ] **Step 4: 运行，确认通过**
 

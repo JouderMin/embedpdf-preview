@@ -134,6 +134,13 @@ WASM：`wasmUrl` 指向 `media/pdfium.wasm` 的 webview URI。`worker` 设为 `f
 
 说明：`fontFallback` 只在 PDF 缺少嵌入字体时使用。繁体中文、日文、韩文第一版不带，遇到时会显示缺字，后续按需增加字体包。
 
+还有两处默认会请求网络，必须关掉：
+
+- 界面字体与签名字体默认从 Google Fonts 取。把界面字体设为 `null`（键名以包内类型为准，实测写法为 `fonts: { ui: null, signature: null }`，Task 3 核实）。
+- 印章功能默认拉 `@embedpdf/default-stamps` 的 `manifest.json`，加载失败会阻塞预览。只读预览不需要印章，配置 `stamp.manifests = []`。
+
+依据：掘金文章《@embedpdf/vue-pdf-viewer内网使用避坑》（作者 桜吹雪，2026-04-10）与其评论区作者补充。
+
 ### 5.5 界面与分类
 
 采用自带界面，关闭与预览定位冲突的分类：写入类（`annotation`、`form`、`redaction`、`signature`、`stamp`）与文件类（`print`、`export`、`attachment`、`fullscreen`，以及打开文件、下载两项命令）。
