@@ -6,7 +6,7 @@ export function pageKey(uri: string): string {
 
 export interface MementoLike {
   get<T>(key: string, def: T): T;
-  update(key: string, value: unknown): Promise<void>;
+  update(key: string, value: unknown): PromiseLike<void>;
 }
 
 function normalizePage(value: unknown, fallback: number): number {
@@ -58,6 +58,18 @@ export class PageState {
   private async writePending(): Promise<void> {
     const entries = [...this.pending.entries()];
     this.pending.clear();
-    await Promise.all(entries.map(([key, page]) => this.store.update(key, page)));
+    await Promise.all(
+      entries.map(async ([key, page]) => {
+        try {
+          await this.store.update(key, page);
+        } catch {
+          // 写入失败时放回待写队列，下一次节流或 flush 再试；
+          // 若期间已经产生了更新的页码，则保留新值，避免旧页码覆盖。
+          if (!this.pending.has(key)) {
+            this.pending.set(key, page);
+          }
+        }
+      }),
+    );
   }
 }

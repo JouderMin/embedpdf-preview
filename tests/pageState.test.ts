@@ -91,3 +91,36 @@ describe('PageState.flush', () => {
     expect(store.update).not.toHaveBeenCalled();
   });
 });
+
+describe('PageState 写入失败', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test('失败页码放回待写，下一次 flush 重试', async () => {
+    const store = makeStore();
+    store.update.mockRejectedValueOnce(new Error('disk full'));
+    const state = newState(store, 500);
+    state.set(uri, 8);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(store.update).toHaveBeenCalledTimes(1);
+
+    await state.flush();
+    expect(store.update).toHaveBeenCalledTimes(2);
+    expect(store.update).toHaveBeenLastCalledWith(pageKey(uri), 8);
+  });
+
+  test('连续失败不抛未处理拒绝，且可反复重试', async () => {
+    const store = makeStore();
+    store.update.mockRejectedValue(new Error('disk full'));
+    const state = newState(store);
+    state.set(uri, 9);
+    await expect(state.flush()).resolves.toBeUndefined();
+    await expect(state.flush()).resolves.toBeUndefined();
+    expect(store.update).toHaveBeenCalledTimes(2);
+  });
+});

@@ -1,9 +1,16 @@
 import * as vscode from 'vscode';
+import { PdfPreviewProvider } from './pdfEditorProvider';
 
-export function activate(_context: vscode.ExtensionContext): void {
-  // filled by later tasks
+export function activate(context: vscode.ExtensionContext): void {
+  const provider = new PdfPreviewProvider(context);
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(PdfPreviewProvider.viewType, provider, {
+      webviewOptions: { retainContextWhenHidden: true },
+      supportsMultipleEditorsPerDocument: false,
+    }),
+  );
 }
 
 export function deactivate(): void {
-  // filled by later tasks
+  // 订阅随 context.subscriptions 一起释放。
 }
