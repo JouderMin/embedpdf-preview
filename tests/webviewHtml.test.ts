@@ -9,10 +9,11 @@ const input = {
 };
 
 describe('renderHtml', () => {
-  test('CSP 放开 wasm 与字体，且不放开 https', () => {
+  test('CSP 放开 blob 图片、wasm 与字体，且不放开 https', () => {
     const html = renderHtml(input);
     expect(html).toContain("script-src 'nonce-n1' 'wasm-unsafe-eval'");
     expect(html).toContain('font-src vscode-resource://x');
+    expect(html).toContain('img-src vscode-resource://x data: blob:');
     expect(html).toContain('nonce="n1"');
     expect(html).not.toContain('https:');
   });

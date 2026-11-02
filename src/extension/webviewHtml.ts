@@ -28,7 +28,7 @@ export function renderHtml(input: HtmlInput): string {
     "default-src 'none'",
     `style-src ${cspSource} 'unsafe-inline'`,
     `font-src ${cspSource}`,
-    `img-src ${cspSource} data:`,
+    `img-src ${cspSource} data: blob:`,
     `media-src ${cspSource}`,
     `connect-src ${cspSource}`,
     `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,

@@ -1,126 +1,200 @@
 import { readFileSync } from 'node:fs';
+import { parse } from 'acorn';
 
 const file = process.argv[2] ?? 'dist/webview.js';
 const source = readFileSync(file, 'utf8');
 
 /**
- * 把字符串、模板字符串与注释替换成空格，保留换行与下标。这样不会把
- * `"single process."` 之类文案误判成代码，同时行列号仍可对应原文件。
+ * 用 acorn 解析真实语法树，而不是手写字符串/注释掩码。上一版掩码器不识别
+ * 正则字面量，可能把文件末尾的真实代码当成字符串，导致注入的 process.env 漏检。
  */
-function maskNonCode(text) {
-  const chars = text.split('');
-  const length = text.length;
-  let i = 0;
-
-  while (i < length) {
-    const char = text[i];
-
-    if (char === '/' && text[i + 1] === '/') {
-      chars[i] = ' ';
-      chars[i + 1] = ' ';
-      i += 2;
-      while (i < length && text[i] !== '\n') {
-        chars[i] = ' ';
-        i++;
-      }
-      continue;
-    }
-
-    if (char === '/' && text[i + 1] === '*') {
-      chars[i] = ' ';
-      chars[i + 1] = ' ';
-      i += 2;
-      while (i < length && !(text[i] === '*' && text[i + 1] === '/')) {
-        if (text[i] !== '\n') {
-          chars[i] = ' ';
-        }
-        i++;
-      }
-      if (i < length) {
-        chars[i] = ' ';
-        chars[i + 1] = ' ';
-        i += 2;
-      }
-      continue;
-    }
-
-    if (char === "'" || char === '"' || char === '`') {
-      const quote = char;
-      chars[i] = ' ';
-      i++;
-      while (i < length) {
-        if (text[i] === '\\') {
-          chars[i] = ' ';
-          if (i + 1 < length) {
-            chars[i + 1] = ' ';
-          }
-          i += 2;
-          continue;
-        }
-        if (text[i] === quote) {
-          chars[i] = ' ';
-          i++;
-          break;
-        }
-        if (text[i] !== '\n') {
-          chars[i] = ' ';
-        }
-        i++;
-      }
-      continue;
-    }
-
-    i++;
-  }
-
-  return chars.join('');
+let ast;
+try {
+  ast = parse(source, {
+    ecmaVersion: 'latest',
+    sourceType: 'module',
+    locations: true,
+    allowHashBang: true,
+    allowAwaitOutsideFunction: true,
+  });
+} catch (error) {
+  console.error(`check-webview-bundle: ${file} 解析失败：${error.message}`);
+  process.exit(1);
 }
 
-const code = maskNonCode(source);
-
-/**
- * 浏览器 webview 里没有 Node 全局。`process.env.NODE_ENV` 必须由 Vite define
- * 在编译期替换；这里兜底扫描产物，防止回归。
- *
- * 只报“未受保护”的引用：React/PDFium 里存在 `typeof process == 'object' &&
- * process.emit(...)` 这类安全分支，`typeof` 检查会短路，不触发 ReferenceError。
- * 对象属性（`state.global.add`）不算全局引用。
- */
-const checks = [
-  { name: 'process', pattern: /(?<![.\w$])process\./g, allowTypeofGuard: true },
-  { name: 'global', pattern: /(?<![.\w$])global\./g, allowTypeofGuard: true },
-  { name: 'Buffer', pattern: /(?<![.\w$])Buffer\./g, allowTypeofGuard: false },
-  { name: '__dirname', pattern: /(?<![.\w$])__dirname\b/g, allowTypeofGuard: false },
-  { name: '__filename', pattern: /(?<![.\w$])__filename\b/g, allowTypeofGuard: false },
-];
-
+const GLOBAL_NAMES = new Set(['process', 'global', 'Buffer', '__dirname', '__filename']);
 const findings = [];
 const guarded = [];
 
-for (const { name, pattern, allowTypeofGuard } of checks) {
-  for (const match of code.matchAll(pattern)) {
-    const index = match.index ?? 0;
-    const before = code.slice(Math.max(0, index - 200), index);
-    // 同一句里的 typeof process 检查才能短路；上一条语句里的检查不算。
-    const currentStatement = before.slice(before.lastIndexOf(';') + 1);
-    const hasTypeofGuard = new RegExp(`typeof\\s+${name}\\b`).test(currentStatement);
-    // process.env 即使有 typeof 守卫也要求编译期替换，不能留给浏览器。
-    const isEnv = name === 'process' && code.slice(index, index + 11) === 'process.env';
-    if (allowTypeofGuard && hasTypeofGuard && !isEnv) {
-      guarded.push({ name, index });
+function containsTypeofProcess(node) {
+  let found = false;
+  const visit = (current) => {
+    if (found || !current || typeof current.type !== 'string') {
+      return;
+    }
+    if (
+      current.type === 'UnaryExpression' &&
+      current.operator === 'typeof' &&
+      current.argument.type === 'Identifier' &&
+      current.argument.name === 'process'
+    ) {
+      found = true;
+      return;
+    }
+    for (const key of Object.keys(current)) {
+      if (key === 'start' || key === 'end' || key === 'loc' || key === 'range') {
+        continue;
+      }
+      const value = current[key];
+      if (Array.isArray(value)) {
+        for (const child of value) {
+          visit(child);
+        }
+      } else {
+        visit(value);
+      }
+    }
+  };
+  visit(node);
+  return found;
+}
+
+function isGuardedByTypeof(ancestors) {
+  for (let index = ancestors.length - 1; index >= 0; index--) {
+    const ancestor = ancestors[index];
+    const test =
+      ancestor.type === 'IfStatement' ||
+      ancestor.type === 'ConditionalExpression' ||
+      ancestor.type === 'WhileStatement' ||
+      ancestor.type === 'DoWhileStatement' ||
+      ancestor.type === 'ForStatement'
+        ? ancestor.test
+        : ancestor.type === 'LogicalExpression'
+          ? ancestor
+          : null;
+    if (test && containsTypeofProcess(test)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isReferenceIdentifier(node, parent) {
+  if (!parent) {
+    return false;
+  }
+  if (parent.type === 'MemberExpression') {
+    return parent.object === node || parent.computed;
+  }
+  if (
+    (parent.type === 'Property' ||
+      parent.type === 'MethodDefinition' ||
+      parent.type === 'PropertyDefinition') &&
+    parent.key === node &&
+    !parent.computed
+  ) {
+    return false;
+  }
+  if (parent.type === 'VariableDeclarator' && parent.id === node) {
+    return false;
+  }
+  if (
+    (parent.type === 'FunctionDeclaration' ||
+      parent.type === 'FunctionExpression' ||
+      parent.type === 'ArrowFunctionExpression') &&
+    (parent.id === node || parent.params.includes(node))
+  ) {
+    return false;
+  }
+  if (
+    (parent.type === 'ClassDeclaration' || parent.type === 'ClassExpression') &&
+    parent.id === node
+  ) {
+    return false;
+  }
+  if (
+    (parent.type === 'LabeledStatement' ||
+      parent.type === 'BreakStatement' ||
+      parent.type === 'ContinueStatement') &&
+    parent.label === node
+  ) {
+    return false;
+  }
+  if (
+    (parent.type === 'ImportSpecifier' ||
+      parent.type === 'ImportDefaultSpecifier' ||
+      parent.type === 'ImportNamespaceSpecifier' ||
+      parent.type === 'ExportSpecifier') &&
+    (parent.local === node || parent.imported === node || parent.exported === node)
+  ) {
+    return false;
+  }
+  if (parent.type === 'CatchClause' && parent.param === node) {
+    return false;
+  }
+  return true;
+}
+
+function addFinding(node, name) {
+  findings.push({
+    name,
+    line: node.loc.start.line,
+    column: node.loc.start.column + 1,
+    excerpt: source.slice(Math.max(0, node.start - 40), node.end + 60).replace(/\s+/g, ' '),
+  });
+}
+
+function visit(node, ancestors = []) {
+  if (!node || typeof node.type !== 'string') {
+    return;
+  }
+
+  if (node.type === 'Identifier' && GLOBAL_NAMES.has(node.name)) {
+    const parent = ancestors[ancestors.length - 1];
+    if (isReferenceIdentifier(node, parent)) {
+      const isTypeofArgument =
+        parent?.type === 'UnaryExpression' &&
+        parent.operator === 'typeof' &&
+        parent.argument === node;
+      const isEnv =
+        node.name === 'process' &&
+        parent?.type === 'MemberExpression' &&
+        parent.object === node &&
+        ((!parent.computed &&
+          parent.property.type === 'Identifier' &&
+          parent.property.name === 'env') ||
+          (parent.computed &&
+            parent.property.type === 'Literal' &&
+            parent.property.value === 'env'));
+
+      if (isEnv) {
+        addFinding(node, node.name);
+      } else if (isTypeofArgument || (node.name === 'process' && isGuardedByTypeof(ancestors))) {
+        guarded.push({ name: node.name });
+      } else {
+        addFinding(node, node.name);
+      }
+    }
+  }
+
+  for (const key of Object.keys(node)) {
+    if (key === 'start' || key === 'end' || key === 'loc' || key === 'range') {
       continue;
     }
-    const line = source.slice(0, index).split('\n').length;
-    const lastNewline = source.lastIndexOf('\n', index);
-    const column = index - lastNewline;
-    findings.push({
-      name,
-      line,
-      column,
-      excerpt: source.slice(Math.max(0, index - 40), index + 60).replace(/\s+/g, ' '),
-    });
+    const value = node[key];
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        if (child && typeof child.type === 'string') {
+          visit(child, [...ancestors, node]);
+        }
+      }
+    } else if (value && typeof value.type === 'string') {
+      visit(value, [...ancestors, node]);
+    }
   }
 }
+
+visit(ast);
 
 if (findings.length > 0) {
   console.error(`check-webview-bundle: ${file} 含未受保护的 Node 全局引用`);
@@ -132,11 +206,12 @@ if (findings.length > 0) {
   process.exit(1);
 }
 
-const summary = checks
-  .map(({ name }) => {
-    const guardedCount = guarded.filter((item) => item.name === name).length;
-    return guardedCount > 0 ? `${name}: ${guardedCount} guarded` : `${name}: 0`;
+const summary = ['process', 'global', 'Buffer', '__dirname', '__filename']
+  .map((name) => {
+    const count = guarded.filter((item) => item.name === name).length;
+    return count > 0 ? `${name}: ${count} guarded` : `${name}: 0`;
   })
   .join(', ');
-const bytes = Buffer.byteLength(source, 'utf8');
-console.log(`check-webview-bundle: OK (${file}, ${bytes} bytes) — ${summary}`);
+console.log(
+  `check-webview-bundle: OK (${file}, ${Buffer.byteLength(source, 'utf8')} bytes) — ${summary}`,
+);
