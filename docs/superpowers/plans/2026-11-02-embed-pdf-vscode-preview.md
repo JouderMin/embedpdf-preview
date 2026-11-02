@@ -593,6 +593,7 @@ Expected: 生成 `.vsix`，输出中无 “WARNING Missing repository field” �
 - [ ] 用 `mv` 替换 PDF，只重载一次、无删除提示。
 - [ ] 同一 PDF 已打开时再双击，聚焦已有编辑器。
 - [ ] 未设默认时，激活后通知只出现一次。
+- [ ] 打开命令面板“开发者: 打开 Webview 开发者工具”，网络面板刷新页面，确认没有 `fonts.googleapis.com`、`fonts.gstatic.com`、`cdn.jsdelivr.net` 请求。
 
 - [ ] **Step 4: 写 README**
 

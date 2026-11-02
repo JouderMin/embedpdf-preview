@@ -143,7 +143,10 @@ WASM：`wasmUrl` 指向 `media/pdfium.wasm` 的 webview URI。`worker` 设为 `f
 
 ### 5.5 界面与分类
 
-采用自带界面，关闭与预览定位冲突的分类：写入类（`annotation`、`form`、`redaction`、`signature`、`stamp`）与文件类（`print`、`export`、`attachment`、`fullscreen`，以及打开文件、下载两项命令）。
+采用自带界面，关闭与预览定位冲突的分类。分类名以包内实际标签为准：
+
+- 写入类：`annotation`、`form`、`redaction`、`signature`、`stamp`、`insert`（图片与附件插入）。
+- 文件类：`document-print`、`document-export`、`document-capture`、`document-fullscreen`、`document-open`、`document-close`。
 
 保留阅读类：搜索、缩放、缩略图、书签、选中复制、旋转、滚动布局、页码跳转。
 
