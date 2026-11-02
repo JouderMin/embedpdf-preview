@@ -73,7 +73,7 @@ src/webview/            webview 端，浏览器环境
 src/shared/protocol.ts  两端共用的消息类型
 ```
 
-扩展端用 rolldown 打包成 CommonJS，webview 端用 Vite 打包成 ES 模块。Vite 8 内部同样使用 rolldown/oxc，构建链不再依赖 esbuild。资源在构建时复制：`node_modules/@embedpdf/pdfium/dist/pdfium.wasm` 与 `@embedpdf/fonts-sc`、`@embedpdf/fonts-latin` 的字体文件复制到 `media/`。
+扩展端用 rolldown 打包成 CommonJS，webview 端用 Vite 打包成 ES 模块，界面使用 React 19。Vite 8 内部同样使用 rolldown/oxc，构建链不再依赖 esbuild。资源在构建时复制：`node_modules/@embedpdf/pdfium/dist/pdfium.wasm` 与 `@embedpdf/fonts-sc`、`@embedpdf/fonts-latin` 的字体文件复制到 `media/`。
 
 单视图策略：注册编辑器时设 `supportsMultipleEditorsPerDocument: false`。同一 PDF 已经打开时，再次双击只会聚焦已有编辑器，不再新建。理由：重载状态与页码都在编辑器实例内，两个视图同时重载会争用同一页码键；按文档单例广播则要改 provider 与 reloadController 的所有权模型，第一版不值得。
 
