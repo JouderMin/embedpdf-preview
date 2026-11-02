@@ -40,6 +40,14 @@ describe('createViewerConfig', () => {
     expect(config.theme).toEqual({ preference: 'dark' });
   });
 
+  test('渲染与预取参数：增大瓦片、预取一环并加深页面缓冲', () => {
+    const config = createViewerConfig(input);
+    expect(config.tiling).toEqual({ tileSize: 1024, extraRings: 1 });
+    expect(config.scroll).toEqual({ defaultBufferSize: 6 });
+    // viewportGap 只影响页间距，不是预取范围；包内没有 scroll prefetch gap 配置。
+    expect(config.viewport).toBeUndefined();
+  });
+
   test('worker:false 时运行时从 wasmUrl 取 media/pdfium.wasm，而非内联副本', () => {
     const config = createViewerConfig({
       ...input,

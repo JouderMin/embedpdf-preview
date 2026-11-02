@@ -16,6 +16,16 @@
  * - 引擎只在 URL 不以 `http://`、`https://`、`/` 开头时才拼 `fontFallback.baseUrl`
  *   （`@embedpdf/engines/dist/lib/pdfium/font-fallback.js`）。这里直接给绝对
  *   webview URI，并省略 `baseUrl`，避免 `vscode-resource://` 被重复前缀。
+ * - 渲染倍率不在这里配置：tiling 在 `dist/react/index.js` 创建瓦片时固定传
+ *   `dpr: window.devicePixelRatio`，引擎再按 `scaleFactor * dpr` 出图
+ *   （`@embedpdf/plugin-tiling/dist/lib/types.d.ts:62`、
+ *   `@embedpdf/models/dist/pdf.d.ts:2791-2793`）。缩放变化由 tiling 监听
+ *   `onScaleChanged` 后按新 `scale` 重建瓦片。
+ * - `tiling.tileSize` 默认 768、`overlapPx` 2.5、`extraRings` 0
+ *   （`@embedpdf/plugin-tiling/dist/index.js` manifest）；`scroll.defaultBufferSize`
+ *   的 manifest 默认是 4，但 reducer 的兜底是 2
+ *   （`@embedpdf/plugin-scroll/dist/index.js`）。`viewport.viewportGap` 只是
+ *   页间距/定位偏移，不是预取范围；包内没有单独的滚动预取 gap 选项。
  *
  * `disabledCategories` 的合法值来自命令与 UI schema 的实际分类标签
  * （`@embedpdf/snippet/dist/embedpdf-*.js` 内 `categories:[...]`）。命令只要命中任一
@@ -76,6 +86,11 @@ export function createViewerConfig(input: ViewerConfigInput): PDFViewerConfig {
     wasmUrl: input.wasmUrl,
     theme: { preference: input.theme },
     disabledCategories: [...DISABLED_CATEGORIES],
+    // 1024 覆盖 A4 在 100% 下的一整页宽度/高度，减少一页被拆成上下两块时只出现上半页；
+    // extraRings 1 预取可视区外一圈瓦片，快速滚动时下一屏已就绪。
+    tiling: { tileSize: 1024, extraRings: 1 },
+    // 深缓冲相邻页，快速滚动时提前建立下一页的瓦片；viewportGap 不是预取参数。
+    scroll: { defaultBufferSize: 6 },
     fonts: { ui: null, signature: null },
     stamp: { manifests: [] },
     fontFallback: {
