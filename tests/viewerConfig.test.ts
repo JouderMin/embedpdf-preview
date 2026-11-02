@@ -40,6 +40,17 @@ describe('createViewerConfig', () => {
     expect(config.theme).toEqual({ preference: 'dark' });
   });
 
+  test('worker:false 时运行时从 wasmUrl 取 media/pdfium.wasm，而非内联副本', () => {
+    const config = createViewerConfig({
+      ...input,
+      wasmUrl: 'vscode-resource://w/dist/media/pdfium.wasm',
+    });
+    expect(config.worker).toBe(false);
+    expect(config.wasmUrl).toBe('vscode-resource://w/dist/media/pdfium.wasm');
+    expect(config.wasmUrl).toContain('/media/pdfium.wasm');
+    expect(JSON.stringify(config)).not.toContain('data:application/wasm');
+  });
+
   test('中文字体回退到本地 Noto Sans CJK', () => {
     const config = createViewerConfig(input);
     expect(config.fontFallback?.fonts?.[FontCharset.GB2312]).toEqual([

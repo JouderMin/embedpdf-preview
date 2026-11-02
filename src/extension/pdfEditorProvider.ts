@@ -134,6 +134,9 @@ export class PdfPreviewProvider implements vscode.CustomReadonlyEditorProvider {
     const viewStateSubscription = panel.onDidChangeViewState((event) => {
       if (event.webviewPanel.active) {
         this.activeKey = key;
+      } else if (this.activeKey === key) {
+        // 失焦或切到其他编辑器后，reload 命令不应重载后台预览。
+        this.activeKey = undefined;
       }
     });
 

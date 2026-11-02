@@ -98,7 +98,7 @@ export function App() {
             scroll,
             previous,
           });
-          currentRef.current = { documentId: result.documentId, page: message.page };
+          currentRef.current = { documentId: result.documentId, page: result.page };
           setError(null);
         } catch (loadError) {
           reportRender(errorMessage(loadError));

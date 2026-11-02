@@ -1,17 +1,33 @@
 import type { HostToWebview, WebviewToHost } from '../shared/protocol';
 
+/**
+ * `@embedpdf/models` 的 Task 最小真实形状：加载任务由 `toPromise()` 等待，
+ * `wait()` 只接受两个回调。不要把 `wait()` 当成返回 Promise 的函数使用。
+ */
+export interface PdfTaskLike<R> {
+  toPromise(): Promise<R>;
+  wait(
+    onResolved: (result: R) => void,
+    onRejected: (error: { type: 'reject' | 'abort'; reason: unknown }) => void,
+  ): void;
+}
+
+/** `DocumentManagerCapability` 中本文件用到的真实签名（见 plugin-document-manager）。 */
 export interface DocumentManagerCapability {
   openDocumentBuffer(options: {
     buffer: ArrayBuffer;
     name: string;
     autoActivate: boolean;
-  }): { wait(): Promise<unknown> };
-  closeDocument(documentId: string): void;
+  }): PdfTaskLike<{ documentId: string; task: PdfTaskLike<unknown> }>;
+  closeDocument(documentId: string): PdfTaskLike<void>;
+  onDocumentError?(
+    handler: (event: { documentId: string; message: string }) => void,
+  ): () => void;
 }
 
 export interface ScrollScopeLike {
   getCurrentPage(): number;
-  scrollToPage(options: { pageNumber: number; behavior: 'instant' }): Promise<void>;
+  scrollToPage(options: { pageNumber: number; behavior: 'instant' }): void;
 }
 
 export interface ScrollCapabilityLike {
@@ -33,6 +49,14 @@ export interface ApplyNewDocumentInput {
   manager: DocumentManagerCapability;
   scroll: ScrollCapabilityLike;
   previous?: { documentId: string; page: number };
+  /** 等待新文档首屏布局的上限，防止损坏文档让界面永久挂起。 */
+  layoutTimeoutMs?: number;
+}
+
+export interface ApplyNewDocumentResult {
+  documentId: string;
+  /** 实际跳转到的页码（目标页超过总页数时会夹取到末页）。 */
+  page: number;
 }
 
 interface LayoutEvent {
@@ -42,48 +66,76 @@ interface LayoutEvent {
   totalPages: number;
 }
 
-function documentIdOf(response: unknown): string | undefined {
-  if (typeof response === 'string') {
-    return response;
-  }
-  if (response && typeof response === 'object') {
-    const id = (response as { documentId?: unknown }).documentId;
-    if (typeof id === 'string' && id.length > 0) {
-      return id;
-    }
-  }
-  return undefined;
-}
-
 function clampPage(targetPage: number, totalPages: number): number {
   const target = Number.isFinite(targetPage) ? Math.trunc(targetPage) : 1;
   return Math.max(1, Math.min(target, totalPages));
 }
 
+function taskErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (error && typeof error === 'object' && 'reason' in error) {
+    const reason = (error as { reason: unknown }).reason;
+    if (reason instanceof Error) {
+      return reason.message;
+    }
+    if (typeof reason === 'string') {
+      return reason;
+    }
+  }
+  return String(error);
+}
+
+async function closeQuietly(
+  manager: DocumentManagerCapability,
+  documentId: string,
+  label: string,
+): Promise<void> {
+  try {
+    const closed = manager.closeDocument(documentId);
+    if (closed && typeof closed.toPromise === 'function') {
+      await closed.toPromise();
+    }
+  } catch (error) {
+    console.warn(`${label}失败`, error);
+  }
+}
+
 /**
- * 加载一份新文档并回到原页。顺序：订阅 layout → 打开 → 等首屏 layout →
- * 跳到目标页 → 关闭旧文档。任何一步失败都关闭新文档并让旧文档保持激活。
+ * 加载一份新文档并回到原页。顺序：打开 → 等新文档首屏布局 → 跳到目标页 →
+ * 关闭旧文档。任何一步失败都关闭新文档、保留旧文档。
+ *
+ * 注意两点：
+ * - `openDocumentBuffer` 返回的外层 Task 只表示“已开始加载”，必须等其中的
+ *   `task`（engineTask）或 `onDocumentError` 才能知道真实加载结果。
+ * - layoutReady 是 behavior emitter，订阅时会重放旧文档最后一条事件；因此
+ *   所有缓冲和等待都按新 documentId 过滤。
  */
 export async function applyNewDocument(
   input: ApplyNewDocumentInput,
-): Promise<{ documentId: string }> {
+): Promise<ApplyNewDocumentResult> {
   const buffered: LayoutEvent[] = [];
+  const documentErrors = new Map<string, string>();
   let newDocumentId: string | undefined;
-  let waiter:
-    | { documentId?: string; resolve: (event: LayoutEvent) => void }
-    | undefined;
+  let waiter: { documentId: string; resolve: (event: LayoutEvent) => void } | undefined;
+  let failForDocument: ((documentId: string, message: string) => void) | undefined;
 
-  const unsubscribe = input.scroll.onLayoutReady((event) => {
+  const unsubscribeLayout = input.scroll.onLayoutReady((event) => {
     if (!event.isInitial) {
       return;
     }
-    // 先入缓冲再唤醒：即使 layout 事件早于 wait() 返回，也能被后续查找命中。
     buffered.push(event);
-    if (waiter && (!waiter.documentId || event.documentId === waiter.documentId)) {
+    if (waiter && event.documentId === waiter.documentId) {
       const pending = waiter;
       waiter = undefined;
       pending.resolve(event);
     }
+  });
+
+  const unsubscribeError = input.manager.onDocumentError?.((event) => {
+    documentErrors.set(event.documentId, event.message);
+    failForDocument?.(event.documentId, event.message);
   });
 
   const waitForLayout = (documentId: string): Promise<LayoutEvent> => {
@@ -97,70 +149,78 @@ export async function applyNewDocument(
   };
 
   try {
-    const task = input.manager.openDocumentBuffer({
-      buffer: input.bytes,
-      name: input.name,
-      autoActivate: true,
-    });
-    const response = await task.wait();
-    newDocumentId = documentIdOf(response);
+    const response = await input.manager
+      .openDocumentBuffer({
+        buffer: input.bytes,
+        name: input.name,
+        autoActivate: true,
+      })
+      .toPromise();
 
-    // 真实 API 的 wait() 返回 { documentId }，但计划里的最小接口允许返回
-    // unknown；没有 documentId 时退回本次打开产生的首个首屏 layout 事件。
-    let layout: LayoutEvent | undefined;
-    if (!newDocumentId) {
-      const firstLayout =
-        buffered[buffered.length - 1] ??
-        (await new Promise<LayoutEvent>((resolve) => {
-          waiter = { resolve };
-        }));
-      newDocumentId = firstLayout.documentId;
-      layout = firstLayout;
-    } else {
-      layout = buffered.find((event) => event.documentId === newDocumentId);
-      if (!layout) {
-        layout = await waitForLayout(newDocumentId);
-      }
+    newDocumentId = response.documentId;
+    if (typeof newDocumentId !== 'string' || newDocumentId.length === 0) {
+      throw new Error('打开文档后没有返回 documentId');
     }
 
-    if (!layout || layout.totalPages <= 0) {
+    const loadFailure = new Promise<never>((_resolve, reject) => {
+      const fail = (message: string) => {
+        reject(new Error(message));
+      };
+      failForDocument = (documentId, message) => {
+        if (documentId === newDocumentId) {
+          fail(message);
+        }
+      };
+      const existing = documentErrors.get(newDocumentId!);
+      if (existing !== undefined) {
+        fail(existing);
+        return;
+      }
+      response.task.toPromise().catch((error) => {
+        fail(taskErrorMessage(error));
+      });
+    });
+
+    const layoutPromise = waitForLayout(newDocumentId);
+    const timeoutMs = input.layoutTimeoutMs ?? 10_000;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        reject(new Error(`等待文档布局超时（${timeoutMs}ms）`));
+      }, timeoutMs);
+    });
+
+    let layout: LayoutEvent;
+    try {
+      layout = await Promise.race([layoutPromise, loadFailure, timeoutPromise]);
+    } finally {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+      }
+      failForDocument = undefined;
+    }
+
+    if (layout.totalPages <= 0) {
       throw new Error('文档没有可显示的页面');
     }
 
-    const pageNumber = clampPage(input.targetPage, layout.totalPages);
-    await input.scroll
-      .forDocument(newDocumentId)
-      .scrollToPage({ pageNumber, behavior: 'instant' });
+    const page = clampPage(input.targetPage, layout.totalPages);
+    input.scroll.forDocument(newDocumentId).scrollToPage({ pageNumber: page, behavior: 'instant' });
 
     if (input.previous) {
-      try {
-        input.manager.closeDocument(input.previous.documentId);
-      } catch (error) {
-        console.warn('关闭旧文档失败', error);
-      }
+      await closeQuietly(input.manager, input.previous.documentId, '关闭旧文档');
     }
 
-    return { documentId: newDocumentId };
+    return { documentId: newDocumentId, page };
   } catch (error) {
     if (newDocumentId) {
-      try {
-        input.manager.closeDocument(newDocumentId);
-      } catch (closeError) {
-        console.warn('回滚新文档失败', closeError);
-      }
-    }
-    if (input.previous) {
-      try {
-        await input.scroll
-          .forDocument(input.previous.documentId)
-          .scrollToPage({ pageNumber: input.previous.page, behavior: 'instant' });
-      } catch {
-        // 旧文档可能已经不可用；保留它原来的激活状态即可。
-      }
+      await closeQuietly(input.manager, newDocumentId, '回滚新文档');
     }
     throw error;
   } finally {
-    unsubscribe();
+    failForDocument = undefined;
+    unsubscribeLayout();
+    unsubscribeError?.();
   }
 }
 
