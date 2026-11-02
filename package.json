@@ -66,7 +66,7 @@
     "@types/vscode": "1.85.0",
     "@vitejs/plugin-react": "6.2.1",
     "@vscode/vsce": "4.1.0",
-    "esbuild": "0.28.2",
+    "rolldown": "1.2.16",
     "typescript": "7.0.2",
     "vite": "8.3.5",
     "vitest": "5.0.5"

@@ -1,36 +1,8 @@
 import { fileURLToPath } from 'node:url';
-import { transform } from 'esbuild';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const entry = fileURLToPath(new URL('src/webview/main.tsx', import.meta.url));
-
-/**
- * Vite 8 的 lib 构建仍不会压缩空白（只由 oxc 做语法/标识符处理），产物会多出
- * 约 0.5 MB。这里继续用 esbuild 做一次完整压缩；输出文件名与目录保持不变。
- */
-function minifyWebviewBundle(): Plugin {
-  return {
-    name: 'minify-webview-bundle',
-    apply: 'build',
-    enforce: 'post',
-    async generateBundle(_options, bundle) {
-      for (const output of Object.values(bundle)) {
-        if (output.type !== 'chunk' || output.fileName !== 'webview.js') {
-          continue;
-        }
-        const result = await transform(output.code, {
-          loader: 'js',
-          format: 'esm',
-          target: 'es2022',
-          minify: true,
-          legalComments: 'none',
-        });
-        output.code = result.code;
-      }
-    },
-  };
-}
 
 /**
  * 需要改写的模块：`@embedpdf/pdfium/dist/index.browser.js`，以及 snippet 自带的
@@ -65,14 +37,14 @@ function externalizePdfiumWasm(): Plugin {
 // 输出固定文件名：扩展端在运行时用 URI 拼资源地址，读不到带哈希的名字。
 // 用 lib 模式 + rollup input，不产出 HTML；HTML 由 src/extension/webviewHtml.ts 生成。
 export default defineConfig({
-  plugins: [externalizePdfiumWasm(), react(), minifyWebviewBundle()],
+  plugins: [externalizePdfiumWasm(), react()],
   build: {
     outDir: 'dist',
-    // dist/extension.js 由 esbuild 先写入，Vite 不得清空目录。
+    // dist/extension.js 由 rolldown 先写入，Vite 不得清空目录。
     emptyOutDir: false,
     target: 'es2022',
     cssCodeSplit: false,
-    // CSS 由 Vite/oxc 压缩；JS 另由 minifyWebviewBundle 做完整 esbuild 压缩。
+    // CSS 与 JS 都由 Vite/oxc 压缩。
     minify: 'oxc',
     lib: {
       entry,
@@ -84,7 +56,11 @@ export default defineConfig({
       input: entry,
       // 扩展只加载 dist/webview.js 一个 URL；任何动态分块都会因 CSP/nonce
       // 与固定文件名约定而无法加载，所以强制内联进单文件。
-      output: { codeSplitting: false },
+      // codegen:true 让 oxc 同时压掉空白；lib 模式的默认 codegen:false 会留下换行。
+      output: {
+        codeSplitting: false,
+        minify: { compress: true, mangle: true, codegen: true },
+      },
     },
   },
 });

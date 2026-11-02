@@ -1,23 +1,36 @@
-import { build, context } from 'esbuild';
+import { build, watch } from 'rolldown';
 
-const watch = process.argv.includes('--watch');
+const watchMode = process.argv.includes('--watch');
 
-/** @type {import('esbuild').BuildOptions} */
+/** @type {import('rolldown').BuildOptions} */
 const options = {
-  entryPoints: ['src/extension/extension.ts'],
-  outfile: 'dist/extension.js',
-  bundle: true,
+  input: 'src/extension/extension.ts',
   platform: 'node',
-  format: 'cjs',
-  target: 'node20',
   external: ['vscode'],
-  sourcemap: true,
-  logLevel: 'info',
+  transform: { target: 'node20' },
+  output: {
+    file: 'dist/extension.js',
+    format: 'cjs',
+    sourcemap: true,
+  },
 };
 
-if (watch) {
-  const ctx = await context(options);
-  await ctx.watch();
+if (watchMode) {
+  const watcher = watch(options);
+  watcher.on('event', (event) => {
+    if (event.code === 'ERROR') {
+      console.error('[extension]', event.error);
+    } else if (event.code === 'BUNDLE_END') {
+      console.log(`[extension] built in ${event.duration} ms`);
+      event.result.close();
+    }
+  });
+  const stop = async () => {
+    await watcher.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
 } else {
   await build(options);
 }

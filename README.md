@@ -16,6 +16,8 @@
 2. 运行 `pnpm run build`。
 3. 运行 `pnpm run package`。
 
+扩展端用 rolldown 打包，webview 用 Vite 打包。构建链不依赖 esbuild。
+
 生成的安装包位于 `dist/embedpdf-preview.vsix`。
 
 ## 安装

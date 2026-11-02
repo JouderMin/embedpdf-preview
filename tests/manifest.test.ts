@@ -38,7 +38,7 @@ describe('扩展清单', () => {
       'react',
       'react-dom',
       'typescript',
-      'esbuild',
+      'rolldown',
       'vite',
       '@vitejs/plugin-react',
       'vitest',
@@ -49,6 +49,7 @@ describe('扩展清单', () => {
     ]) {
       expect(deps[name], `missing dependency ${name}`).toBeTypeOf('string');
     }
+    expect(deps.esbuild, 'esbuild 不应作为直接依赖').toBeUndefined();
   });
 
   test('.gitignore 排除依赖、构建产物与本地记录', () => {
