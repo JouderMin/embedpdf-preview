@@ -39,6 +39,29 @@ async function confirmSetDefault(): Promise<boolean> {
   return choice === '设为默认';
 }
 
+async function runSetAsDefault(): Promise<void> {
+  const written = await setAsDefault({
+    read: readAssociations,
+    update: updateAssociations,
+    confirm: confirmSetDefault,
+  });
+  if (!written) {
+    return;
+  }
+  // workspace / workspaceFolder 中的 editorAssociations 优先于刚写入的
+  // Global 值；明确提示，避免命令看起来成功却不生效。
+  const inspected = vscode.workspace
+    .getConfiguration()
+    .inspect<AssociationMap>(ASSOCIATION_KEY);
+  const workspaceOverride = inspected?.workspaceValue?.['*.pdf'] !== undefined;
+  const folderOverride = inspected?.workspaceFolderValue?.['*.pdf'] !== undefined;
+  if (workspaceOverride || folderOverride) {
+    void vscode.window.showWarningMessage(
+      '当前工作区设置已覆盖 PDF 默认编辑器关联；全局设置已写入，但工作区值优先。',
+    );
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new PdfPreviewProvider(context);
   context.subscriptions.push(
@@ -57,28 +80,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand(SET_DEFAULT_COMMAND, async () => {
-      const written = await setAsDefault({
-        read: readAssociations,
-        update: updateAssociations,
-        confirm: confirmSetDefault,
-      });
-      if (!written) {
-        return;
-      }
-      // workspace / workspaceFolder 中的 editorAssociations 优先于刚写入的
-      // Global 值；明确提示，避免命令看起来成功却不生效。
-      const inspected = vscode.workspace
-        .getConfiguration()
-        .inspect<AssociationMap>(ASSOCIATION_KEY);
-      const workspaceOverride = inspected?.workspaceValue?.['*.pdf'] !== undefined;
-      const folderOverride = inspected?.workspaceFolderValue?.['*.pdf'] !== undefined;
-      if (workspaceOverride || folderOverride) {
-        void vscode.window.showWarningMessage(
-          '当前工作区设置已覆盖 PDF 默认编辑器关联；全局设置已写入，但工作区值优先。',
-        );
-      }
-    }),
+    vscode.commands.registerCommand(SET_DEFAULT_COMMAND, runSetAsDefault),
   );
 
   context.subscriptions.push(
@@ -90,7 +92,13 @@ export function activate(context: vscode.ExtensionContext): void {
     notified: () => context.globalState.get<boolean>(ASSOCIATION_NOTIFIED_KEY, false),
     markNotified: () => context.globalState.update(ASSOCIATION_NOTIFIED_KEY, true),
     notify: async () => {
-      await vscode.window.showInformationMessage('PDF 预览已安装，设为默认？');
+      const choice = await vscode.window.showInformationMessage(
+        'PDF 预览已安装，设为默认？',
+        '设为默认',
+      );
+      if (choice === '设为默认') {
+        await runSetAsDefault();
+      }
     },
   });
 }

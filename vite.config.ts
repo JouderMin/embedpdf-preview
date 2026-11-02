@@ -57,7 +57,7 @@ function externalizePdfiumWasm(): Plugin {
       if ((!fromPdfium && !fromSnippetEngine) || !code.includes('pdfium.wasm')) {
         return null;
       }
-      const next = code.replace(wasmUrlPattern, "new URL('./media/pdfium.wasm', import.meta.url)");
+      const next = code.replace(wasmUrlPattern, "new URL(/* @vite-ignore */ './media/pdfium.wasm', import.meta.url)");
       return next === code ? null : { code: next, map: null };
     },
   };

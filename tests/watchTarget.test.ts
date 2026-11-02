@@ -17,9 +17,13 @@ describe('watchTarget', () => {
       'file:///tmp/report%5B1%5D.pdf/child',
       'file:///tmp/report%5B10%5D.pdf',
       'file:///tmp/REPORT%5B1%5D.pdf',
+      'file:///tmp/report[1].pdf',
+      'file:///other/report%5B1%5D.pdf',
     ]) {
       expect(isSameWatchTarget(candidate, target)).toBe(false);
     }
+
+    expect(isSameWatchTarget('file:///tmp/a%20b.pdf', 'file:///tmp/a b.pdf')).toBe(false);
 
     for (const name of ['a?b.pdf', 'x*y.pdf', '{draft}.pdf']) {
       const uri = `file:///tmp/${encodeURIComponent(name)}`;

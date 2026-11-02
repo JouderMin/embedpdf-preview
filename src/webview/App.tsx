@@ -26,8 +26,8 @@ interface ScrollRuntime extends ScrollCapabilityLike {
   ): () => void;
 }
 
-const WASM_URL = new URL('./media/pdfium.wasm', import.meta.url).toString();
-const FONT_BASE_URL = new URL('./media/fonts/', import.meta.url).toString();
+const WASM_URL = new URL(/* @vite-ignore */ './media/pdfium.wasm', import.meta.url).toString();
+const FONT_BASE_URL = new URL(/* @vite-ignore */ './media/fonts/', import.meta.url).toString();
 
 function capabilityOf<T>(registry: Registry, name: string): T | undefined {
   const provider = registry.getCapabilityProvider(name);
@@ -207,7 +207,7 @@ export function App() {
         onReady={handleRegistryReady}
       />
       {error ? (
-        <div className="embedpdf-error" role="alert" title={error.message}>
+        <div className="embedpdf-error" role="alert">
           <span>{error.kind === 'read' ? '无法读取文件' : 'PDF 无法渲染'}</span>
           <button type="button" onClick={() => postToHost({ type: 'retry' })}>
             重试
