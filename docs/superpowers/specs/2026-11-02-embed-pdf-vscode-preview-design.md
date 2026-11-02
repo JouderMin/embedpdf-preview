@@ -37,7 +37,7 @@
 - 字体本地打包，不请求 jsDelivr。
 - 扩展运行在 VS Code webview 中，webview 默认没有网络访问，CSP 需要显式放开 WASM 与字体。
 - 工作区路径含中文（`/Volumes/外置SSD/...`），路径处理不得假设 ASCII。
-- VS Code 版本 1.85 及以上；构建工具需要 Node.js 22.12 及以上。
+- VS Code 版本 1.85 及以上；运行时 Node.js 20（VS Code 扩展宿主）；从源码构建需要 Node.js 22.12 及以上（Vite 8 要求）。
 - 验收文档 20 页以内、5 MB 以内。超过这个规模不保证 1 秒。
 - 打包体积约 26 MB：PDFium WASM 4.6 MB，字体 18 MB，界面代码约 3 MB。
 
