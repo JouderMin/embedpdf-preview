@@ -6,7 +6,9 @@
 
 **Architecture:** 扩展端（Node）用 `CustomReadonlyEditorProvider` 管 webview、读文件字节、监听文件系统；webview 端（浏览器）用 React 挂官方 `PDFViewer`，收到字节后走 `document-manager` 换文档、`scroll` 跳页。两端只通过 `postMessage` 消息协议通信。
 
-**Tech Stack:** TypeScript、esbuild、Vite、React、`@embedpdf/react-pdf-viewer`、vitest。
+**Tech Stack:** TypeScript、rolldown、Vite、React、`@embedpdf/react-pdf-viewer`、vitest。
+
+说明：计划写于 2026-11-02，构建链后续有过两次调整，以设计文档为准：扩展端打包由 esbuild 改为 rolldown（t17），Vite 升到 8 并改用 rolldown/oxc 内核。
 
 **Spec:** `docs/superpowers/specs/2026-11-02-embed-pdf-vscode-preview-design.md`
 
@@ -73,11 +75,11 @@ Expected: FAIL，`Cannot find module 'package.json'` 或 `customEditors` 为 und
 
 `package.json`：名字 `embedpdf-preview`，`main: "./dist/extension.js"`，`engines.vscode: "^1.85.0"`，`activationEvents` 见上，`contributes.customEditors` 与 `contributes.commands`（`embedpdf.reload` 标题“重载预览”，`embedpdf.setAsDefault` 标题“将 PDF 预览设为默认”）。`priority` 用 `option`，理由：不抢其他扩展，默认关联交给命令。
 
-依赖：`@embedpdf/react-pdf-viewer`、`@embedpdf/pdfium`、`@embedpdf/fonts-sc`、`@embedpdf/fonts-latin`、`react`、`react-dom`；devDependencies：`typescript`、`esbuild`、`vite`、`@vitejs/plugin-react`、`vitest`、`@types/vscode@^1.85.0`、`@types/react`、`@types/react-dom`、`@vscode/vsce`。
+依赖：`@embedpdf/react-pdf-viewer`、`@embedpdf/pdfium`、`@embedpdf/fonts-sc`、`@embedpdf/fonts-latin`、`react`、`react-dom`；devDependencies：`typescript`、`rolldown`、`vite`、`@vitejs/plugin-react`、`vitest`、`@types/vscode@1.85.0`、`@types/react`、`@types/react-dom`、`@vscode/vsce`。
 
 `src/extension/extension.ts` 先只导出 `activate` 与 `deactivate`，体内留空并加 `// filled by later tasks`。
 
-`scripts/build-extension.mjs`：esbuild 打包 `src/extension/extension.ts` → `dist/extension.js`，`platform: 'node'`，`format: 'cjs'`，`external: ['vscode']`。`scripts/copy-assets.mjs`：复制 `node_modules/@embedpdf/pdfium/dist/pdfium.wasm` 到 `dist/media/pdfium.wasm`，复制 `@embedpdf/fonts-sc` 与 `@embedpdf/fonts-latin` 的全部 `.otf`/`.ttf` 到 `dist/media/fonts/`；文件不存在时以非 0 退出并打印缺失路径。
+`scripts/build-extension.mjs`：rolldown 打包 `src/extension/extension.ts` → `dist/extension.js`，平台 node、`format: 'cjs'`、`external: ['vscode']`、目标 node20。`scripts/copy-assets.mjs`：复制 `node_modules/@embedpdf/pdfium/dist/pdfium.wasm` 到 `dist/media/pdfium.wasm`，复制 `@embedpdf/fonts-sc` 与 `@embedpdf/fonts-latin` 的全部 `.otf`/`.ttf` 到 `dist/media/fonts/`；文件不存在时以非 0 退出并打印缺失路径。
 
 `vitest.config.ts`：`environment: 'node'`，`include: ['tests/**/*.test.ts']`。
 
