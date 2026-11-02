@@ -48,7 +48,7 @@
     "build": "node scripts/build-extension.mjs && vite build && node scripts/copy-assets.mjs",
     "watch": "node scripts/watch.mjs",
     "test": "vitest run",
-    "package": "vsce package --no-dependencies -o dist/embedpdf-preview.vsix"
+    "package": "node scripts/package.mjs"
   },
   "dependencies": {
     "@embedpdf/fonts-latin": "1.0.0",

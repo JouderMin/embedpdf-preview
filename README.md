@@ -8,6 +8,14 @@
 - 监听文件变化。文件保存后自动重载，并停在当前页。
 - 记住每个文件的页码。关闭编辑器或重启 VS Code 后，重新打开仍回到原页。
 
+## 构建
+
+1. 运行 `pnpm install`。
+2. 运行 `pnpm run build`。
+3. 运行 `pnpm run package`。
+
+生成的安装包位于 `dist/embedpdf-preview.vsix`。
+
 ## 安装
 
 1. 下载 `dist/embedpdf-preview.vsix`。

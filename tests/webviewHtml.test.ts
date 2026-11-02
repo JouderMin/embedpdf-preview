@@ -17,6 +17,16 @@ describe('renderHtml', () => {
     expect(html).not.toContain('https:');
   });
 
+  test('不同 nonce 生成不同 HTML，且各自包含自己的 nonce', () => {
+    const first = renderHtml({ ...input, nonce: 'nonce-a' });
+    const second = renderHtml({ ...input, nonce: 'nonce-b' });
+    expect(first).not.toBe(second);
+    expect(first).toContain('nonce-a');
+    expect(first).not.toContain('nonce-b');
+    expect(second).toContain('nonce-b');
+    expect(second).not.toContain('nonce-a');
+  });
+
   test('加载固定产物并保留 root 容器', () => {
     const html = renderHtml(input);
     expect(html).toContain('<div id="root"></div>');
