@@ -45,7 +45,7 @@
     ]
   },
   "scripts": {
-    "build": "node scripts/build-extension.mjs && vite build && node scripts/copy-assets.mjs",
+    "build": "node scripts/build-extension.mjs && vite build && node scripts/check-webview-bundle.mjs && node scripts/copy-assets.mjs",
     "watch": "node scripts/watch.mjs",
     "test": "vitest run",
     "package": "node scripts/package.mjs"

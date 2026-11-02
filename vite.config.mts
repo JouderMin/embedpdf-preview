@@ -38,6 +38,11 @@ function externalizePdfiumWasm(): Plugin {
 // 用 lib 模式 + rollup input，不产出 HTML；HTML 由 src/extension/webviewHtml.ts 生成。
 export default defineConfig({
   plugins: [externalizePdfiumWasm(), react()],
+  // React 19 运行时按 process.env.NODE_ENV 分支；webview 在浏览器里没有 process。
+  // lib 构建不会自动替换，必须在编译期定成常量。
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('production'),
+  },
   build: {
     outDir: 'dist',
     // dist/extension.js 由 rolldown 先写入，Vite 不得清空目录。
