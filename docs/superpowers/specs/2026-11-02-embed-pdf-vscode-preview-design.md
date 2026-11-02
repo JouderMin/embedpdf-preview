@@ -37,7 +37,7 @@
 - 字体本地打包，不请求 jsDelivr。
 - 扩展运行在 VS Code webview 中，webview 默认没有网络访问，CSP 需要显式放开 WASM 与字体。
 - 工作区路径含中文（`/Volumes/外置SSD/...`），路径处理不得假设 ASCII。
-- VS Code 版本 1.85 及以上，Node.js 20。
+- VS Code 版本 1.85 及以上；运行时 Node.js 20（VS Code 扩展宿主）；从源码构建需要 Node.js 22.12 及以上（Vite 8 要求）。
 - 验收文档 20 页以内、5 MB 以内。超过这个规模不保证 1 秒。
 - 打包体积约 26 MB：PDFium WASM 4.6 MB，字体 18 MB，界面代码约 3 MB。
 
@@ -73,7 +73,7 @@ src/webview/            webview 端，浏览器环境
 src/shared/protocol.ts  两端共用的消息类型
 ```
 
-扩展端用 esbuild 打包成 CommonJS，webview 端用 Vite 打包成 ES 模块。资源在构建时复制：`node_modules/@embedpdf/pdfium/dist/pdfium.wasm` 与 `@embedpdf/fonts-sc`、`@embedpdf/fonts-latin` 的字体文件复制到 `media/`。
+扩展端用 rolldown 打包成 CommonJS，webview 端用 Vite 打包成 ES 模块，界面使用 React 19。Vite 8 内部同样使用 rolldown/oxc，构建链不再依赖 esbuild。资源在构建时复制：`node_modules/@embedpdf/pdfium/dist/pdfium.wasm` 与 `@embedpdf/fonts-sc`、`@embedpdf/fonts-latin` 的字体文件复制到 `media/`。
 
 单视图策略：注册编辑器时设 `supportsMultipleEditorsPerDocument: false`。同一 PDF 已经打开时，再次双击只会聚焦已有编辑器，不再新建。理由：重载状态与页码都在编辑器实例内，两个视图同时重载会争用同一页码键；按文档单例广播则要改 provider 与 reloadController 的所有权模型，第一版不值得。
 
@@ -105,12 +105,14 @@ webview 到扩展端：
 重载在 webview 内完成，不重建 webview，也不重新初始化 PDFium。
 
 1. webview 收到 `document` 消息。
-2. 从 `registry.getCapabilityProvider('document-manager').provides()` 取文档管理能力，从 `getCapabilityProvider('scroll').provides()` 取滚动能力。
-3. 用 `scroll.forDocument(当前文档 ID).getCurrentPage()` 记录旧页 `P`。消息里的 `page` 作为兜底。
+2. 从 `registry.getCapabilityProvider('document-manager').provides()` 取文档管理能力，从 `getCapabilityProvider('scroll').provides()` 取滚动能力，从 `getCapabilityProvider('zoom').provides()` 取缩放能力。
+3. 记录旧阅读状态：页码 `P`（`scroll.forDocument(当前文档 ID).getCurrentPage()`，消息里的 `page` 兜底）、页内水平/垂直偏移、缩放。偏移用 `scroll.getMetrics().pageVisibilityMetrics` 计算：`offsetX = scaled.pageX - viewportX`，`offsetY = scaled.pageY - viewportY`；`offsetY` 为负数表示视口停在页间空隙。实际比例优先取 `scaled.scale`，拿不到时回退 `zoom.currentZoomLevel`。缩放同时记录 `zoomLevel`（数字百分比或 `fit-page`/`fit-width`/`automatic` 模式）与实际比例。
 4. 先订阅 `scroll.onLayoutReady`，筛出 `documentId` 等于新文档且 `isInitial` 为真的第一次事件。
 5. 调用 `documentManager.openDocumentBuffer({ buffer, name, autoActivate: true })`，等 task 完成，得到新文档 ID。
-6. 在新文档布局就绪后调用 `scroll.forDocument(新文档 ID).scrollToPage({ pageNumber: P, behavior: 'instant' })`。
+6. 在新文档布局就绪后先恢复缩放：`zoom.forDocument(新文档 ID).requestZoom(记录的 zoomLevel)`。再恢复位置：把记录的像素偏移除以记录时的实际比例，得到未缩放页坐标，调用 `scroll.forDocument(新文档 ID).scrollToPage({ pageNumber: P, pageCoordinates: { x: offsetX / 旧比例, y: offsetY / 旧比例 }, behavior: 'instant' })`。
 7. 跳页完成后调用 `documentManager.closeDocument(旧文档 ID)`，释放旧文档内存。
+
+页间位置（视口停在两页之间）就是页坐标为负或超出页高的情况，按原页坐标恢复即可，不能改成“页中央”。页码被夹到末页时，偏移仍按原值应用；越界位置由滚动容器收敛到最近合法位置，不报错。跨 VS Code 重启只持久化页码，不持久化缩放与页内偏移。
 
 说明：先开新文档再关旧文档，避免预览区出现空白闪烁。旧文档关闭失败只记录日志，不影响新文档。
 
@@ -134,9 +136,19 @@ WASM：`wasmUrl` 指向 `media/pdfium.wasm` 的 webview URI。`worker` 设为 `f
 
 说明：`fontFallback` 只在 PDF 缺少嵌入字体时使用。繁体中文、日文、韩文第一版不带，遇到时会显示缺字，后续按需增加字体包。
 
+还有两处默认会请求网络，必须关掉：
+
+- 界面字体与签名字体默认从 Google Fonts 取。把界面字体设为 `null`（键名以包内类型为准，实测写法为 `fonts: { ui: null, signature: null }`，Task 3 核实）。
+- 印章功能默认拉 `@embedpdf/default-stamps` 的 `manifest.json`，加载失败会阻塞预览。只读预览不需要印章，配置 `stamp.manifests = []`。
+
+依据：掘金文章《@embedpdf/vue-pdf-viewer 内网使用避坑》（作者 桜吹雪，2026-04-10）与其评论区作者补充。
+
 ### 5.5 界面与分类
 
-采用自带界面，关闭与预览定位冲突的分类：写入类（`annotation`、`form`、`redaction`、`signature`、`stamp`）与文件类（`print`、`export`、`attachment`、`fullscreen`，以及打开文件、下载两项命令）。
+采用自带界面，关闭与预览定位冲突的分类。分类名以包内实际标签为准：
+
+- 写入类：`annotation`、`form`、`redaction`、`signature`、`stamp`、`insert`（图片与附件插入）。
+- 文件类：`document-print`、`document-export`、`document-capture`、`document-fullscreen`、`document-open`、`document-close`。
 
 保留阅读类：搜索、缩放、缩略图、书签、选中复制、旋转、滚动布局、页码跳转。
 
@@ -182,12 +194,14 @@ WASM：`wasmUrl` 指向 `media/pdfium.wasm` 的 webview URI。`worker` 设为 `f
 
 ### 5.10 构建与打包
 
-npm 脚本：
+pnpm 脚本：
 
-- `build`：esbuild 打包扩展端，Vite 打包 webview，复制资源。
+- `build`：rolldown 打包扩展端，Vite 打包 webview，复制资源。
 - `watch`：同上，两个构建器都监听。
 - `test`：vitest 跑单元测试。
 - `package`：`@vscode/vsce package` 生成 vsix。
+
+扩展端与 webview 的压缩都由 oxc 完成，构建脚本不调用 esbuild。
 
 Vite 输出固定文件名（`webview.js`、`webview.css`），因为扩展端的 HTML 需要在运行时拼资源 URI，无法读哈希文件名。
 
@@ -233,7 +247,7 @@ Vite 输出固定文件名（`webview.js`、`webview.css`），因为扩展端�
 可以自行决定：
 
 - 目录与文件命名细节。
-- esbuild 与 Vite 的具体配置。
+- rolldown 与 Vite 的具体配置。
 - 错误提示的样式。
 - 日志格式。
 
@@ -254,7 +268,7 @@ Vite 输出固定文件名（`webview.js`、`webview.css`），因为扩展端�
 请复核以下各项：
 
 1. 只读预览，关闭所有写入类功能。
-2. 恢复到页，不恢复页内像素偏移。
+2. 重载恢复页码、页内偏移与缩放；页间偏移也按页坐标恢复。跨重启只保留页码。
 3. 页码按文件 URI 存 `globalState`，跨重启保留。
 4. 第一版关闭 worker，主线程运行 PDFium。
 5. 字体只带简体常规与粗体、Latin 四款，不带繁体与日韩。

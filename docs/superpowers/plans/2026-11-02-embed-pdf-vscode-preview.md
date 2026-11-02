@@ -6,7 +6,9 @@
 
 **Architecture:** 扩展端（Node）用 `CustomReadonlyEditorProvider` 管 webview、读文件字节、监听文件系统；webview 端（浏览器）用 React 挂官方 `PDFViewer`，收到字节后走 `document-manager` 换文档、`scroll` 跳页。两端只通过 `postMessage` 消息协议通信。
 
-**Tech Stack:** TypeScript、esbuild、Vite、React、`@embedpdf/react-pdf-viewer`、vitest。
+**Tech Stack:** TypeScript、rolldown、Vite、React、`@embedpdf/react-pdf-viewer`、vitest。
+
+说明：计划写于 2026-11-02，构建链后续有过两次调整，以设计文档为准：扩展端打包由 esbuild 改为 rolldown（t17），Vite 升到 8 并改用 rolldown/oxc 内核。
 
 **Spec:** `docs/superpowers/specs/2026-11-02-embed-pdf-vscode-preview-design.md`
 
@@ -66,24 +68,24 @@ test('激活事件与命令齐全', () => {
 
 - [ ] **Step 2: 运行测试，确认失败**
 
-Run: `npx vitest run tests/manifest.test.ts`
+Run: `pnpm exec vitest run tests/manifest.test.ts`
 Expected: FAIL，`Cannot find module 'package.json'` 或 `customEditors` 为 undefined。
 
 - [ ] **Step 3: 建立骨架**
 
 `package.json`：名字 `embedpdf-preview`，`main: "./dist/extension.js"`，`engines.vscode: "^1.85.0"`，`activationEvents` 见上，`contributes.customEditors` 与 `contributes.commands`（`embedpdf.reload` 标题“重载预览”，`embedpdf.setAsDefault` 标题“将 PDF 预览设为默认”）。`priority` 用 `option`，理由：不抢其他扩展，默认关联交给命令。
 
-依赖：`@embedpdf/react-pdf-viewer`、`@embedpdf/pdfium`、`@embedpdf/fonts-sc`、`@embedpdf/fonts-latin`、`react`、`react-dom`；devDependencies：`typescript`、`esbuild`、`vite`、`@vitejs/plugin-react`、`vitest`、`@types/vscode@^1.85.0`、`@types/react`、`@types/react-dom`、`@vscode/vsce`。
+依赖：`@embedpdf/react-pdf-viewer`、`@embedpdf/pdfium`、`@embedpdf/fonts-sc`、`@embedpdf/fonts-latin`、`react`、`react-dom`；devDependencies：`typescript`、`rolldown`、`vite`、`@vitejs/plugin-react`、`vitest`、`@types/vscode@1.85.0`、`@types/react`、`@types/react-dom`、`@vscode/vsce`。
 
 `src/extension/extension.ts` 先只导出 `activate` 与 `deactivate`，体内留空并加 `// filled by later tasks`。
 
-`scripts/build-extension.mjs`：esbuild 打包 `src/extension/extension.ts` → `dist/extension.js`，`platform: 'node'`，`format: 'cjs'`，`external: ['vscode']`。`scripts/copy-assets.mjs`：复制 `node_modules/@embedpdf/pdfium/dist/pdfium.wasm` 到 `dist/media/pdfium.wasm`，复制 `@embedpdf/fonts-sc` 与 `@embedpdf/fonts-latin` 的全部 `.otf`/`.ttf` 到 `dist/media/fonts/`；文件不存在时以非 0 退出并打印缺失路径。
+`scripts/build-extension.mjs`：rolldown 打包 `src/extension/extension.ts` → `dist/extension.js`，平台 node、`format: 'cjs'`、`external: ['vscode']`、目标 node20。`scripts/copy-assets.mjs`：复制 `node_modules/@embedpdf/pdfium/dist/pdfium.wasm` 到 `dist/media/pdfium.wasm`，复制 `@embedpdf/fonts-sc` 与 `@embedpdf/fonts-latin` 的全部 `.otf`/`.ttf` 到 `dist/media/fonts/`；文件不存在时以非 0 退出并打印缺失路径。
 
 `vitest.config.ts`：`environment: 'node'`，`include: ['tests/**/*.test.ts']`。
 
 - [ ] **Step 4: 运行测试与构建**
 
-Run: `npx vitest run tests/manifest.test.ts && npm run build`
+Run: `pnpm exec vitest run tests/manifest.test.ts && pnpm run build`
 Expected: 测试 PASS；构建退出码 0，`dist/extension.js` 与 `dist/media/` 存在。
 
 - [ ] **Step 5: 提交**
@@ -182,7 +184,7 @@ test('flush 立即写，无待写则不调用', async () => {
 
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `npx vitest run tests/protocol.test.ts tests/pageState.test.ts`
+Run: `pnpm exec vitest run tests/protocol.test.ts tests/pageState.test.ts`
 Expected: FAIL，模块不存在。
 
 - [ ] **Step 3: 写最小代码**
@@ -191,7 +193,7 @@ Expected: FAIL，模块不存在。
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run tests/protocol.test.ts tests/pageState.test.ts`
+Run: `pnpm exec vitest run tests/protocol.test.ts tests/pageState.test.ts`
 Expected: PASS。
 
 - [ ] **Step 5: 提交**
@@ -223,14 +225,16 @@ export function renderHtml(input: HtmlInput): string;
 
 - [ ] **Step 1: 核实包内事实**
 
-Run: `npm i`，然后：
+Run: `pnpm install`，然后：
 
 ```bash
 grep -Rho "document-capture\|document-print\|annotation[^\"']*\|redaction[^\"']*" node_modules/@embedpdf/{snippet,plugin-*}/dist 2>/dev/null | sort -u | head -50
 node -e "const t=await import('@embedpdf/react-pdf-viewer'); console.log(Object.keys(t))"
 ```
 
-目标：得到 `PDFViewerConfig` 的 `theme` 字段形状、`disabledCategories` 的合法值与 `fontFallback` 字段名。把结论写进 `src/webview/viewerConfig.ts` 顶部注释（文件、行号或命令）。若 `theme` 不是 `{ colorScheme }`，按实际类型改测试断言。
+目标：得到 `PDFViewerConfig` 的 `theme` 字段形状、`disabledCategories` 的合法值、`fontFallback` 字段名，以及界面字体与印章两个字段（`fonts`、`stamp`）的键名。把结论写进 `src/webview/viewerConfig.ts` 顶部注释（文件、行号或命令）。若 `theme` 不是 `{ colorScheme }`，按实际类型改测试断言。
+
+另需确认 `@embedpdf/snippet` 是否在 `node_modules` 里：pnpm 无幽灵依赖，复制 `pdfium.wasm` 依赖该包。不在就加进 dependencies。
 
 - [ ] **Step 2: 写失败的测试**
 
@@ -253,6 +257,13 @@ test('配置固定项', () => {
     { url: 'vscode-resource://f/NotoSansHans-Bold.otf', weight: 700 },
   ]);
 });
+test('配置不含任何外部域名，界面字体与印章已关闭', () => {
+  const config = createViewerConfig({ theme: 'light', wasmUrl: 'vscode-resource://w', fontBaseUrl: 'vscode-resource://f/' });
+  const text = JSON.stringify(config);
+  expect(text).not.toMatch(/googleapis|gstatic|jsdelivr|unpkg|default-stamps/i);
+  expect(text).not.toContain('http://');
+  expect(text).not.toContain('https://');
+});
 test('HTML 的 CSP 放开 wasm 与字体，且不放开 https', () => {
   const html = renderHtml({ cspSource: 'vscode-resource://x', scriptUri: 'vscode-resource://x/webview.js', styleUri: 'vscode-resource://x/webview.css', nonce: 'n1' });
   expect(html).toContain("script-src 'nonce-n1' 'wasm-unsafe-eval'");
@@ -264,11 +275,11 @@ test('HTML 的 CSP 放开 wasm 与字体，且不放开 https', () => {
 
 - [ ] **Step 3: 写最小代码**
 
-`viewerConfig` 按核实结果写；字体条目只用 GB2312 的两款与 `CYRILLIC`/`GREEK`/`VIETNAMESE` 复用 `NotoSans-{Regular,Italic,Bold,BoldItalic}.ttf`。`renderHtml` 输出 `<div id="root">`、带 nonce 的脚本标签、`font-src` 与 `media-src` 为 `cspSource`。
+`viewerConfig` 按核实结果写；字体条目只用 GB2312 的两款与 `CYRILLIC`/`GREEK`/`VIETNAMESE` 复用 `NotoSans-{Regular,Italic,Bold,BoldItalic}.ttf`。界面字体与签名字体设为 `null`（`fonts: { ui: null, signature: null }`，键名按核实结果），印章清单设为空（`stamp: { manifests: [] }`），避免 Google Fonts 与 `@embedpdf/default-stamps` 的外网请求。`renderHtml` 输出 `<div id="root">`、带 nonce 的脚本标签、`font-src` 与 `media-src` 为 `cspSource`。
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run tests/viewerConfig.test.ts tests/webviewHtml.test.ts`
+Run: `pnpm exec vitest run tests/viewerConfig.test.ts tests/webviewHtml.test.ts`
 Expected: PASS。若 Step 1 发现分类名不同，先改 `DISABLED_CATEGORIES` 再跑。
 
 - [ ] **Step 5: 提交**
@@ -322,7 +333,7 @@ test('revision 递增', async () => { /* 两次成功重载 revision 为 1、2 *
 
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `npx vitest run tests/reloadController.test.ts`
+Run: `pnpm exec vitest run tests/reloadController.test.ts`
 Expected: FAIL，模块不存在。
 
 - [ ] **Step 3: 写最小代码**
@@ -331,7 +342,7 @@ Expected: FAIL，模块不存在。
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run tests/reloadController.test.ts`
+Run: `pnpm exec vitest run tests/reloadController.test.ts`
 Expected: PASS。
 
 - [ ] **Step 5: 提交**
@@ -399,7 +410,7 @@ test('dispose 释放消息订阅与 controller', async () => { /* dispose 后 po
 
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `npx vitest run tests/webviewSession.test.ts`
+Run: `pnpm exec vitest run tests/webviewSession.test.ts`
 Expected: FAIL，模块不存在。
 
 - [ ] **Step 3: 写最小代码**
@@ -408,7 +419,7 @@ Expected: FAIL，模块不存在。
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run tests/webviewSession.test.ts && npx tsc --noEmit`
+Run: `pnpm exec vitest run tests/webviewSession.test.ts && pnpm exec tsc --noEmit`
 Expected: PASS，类型检查无错。
 
 - [ ] **Step 5: 提交**
@@ -466,7 +477,7 @@ test('没有旧文档时不调用 close', async () => { /* previous 省略 → c
 
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `npx vitest run tests/loadDocument.test.ts`
+Run: `pnpm exec vitest run tests/loadDocument.test.ts`
 Expected: FAIL，模块不存在。
 
 - [ ] **Step 3: 写最小代码**
@@ -479,7 +490,7 @@ Expected: FAIL，模块不存在。
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run tests/loadDocument.test.ts && npm run build`
+Run: `pnpm exec vitest run tests/loadDocument.test.ts && pnpm run build`
 Expected: PASS，构建退出码 0。
 
 - [ ] **Step 5: 提交**
@@ -529,7 +540,7 @@ test('未关联时只通知一次', async () => { /* 第一次 notify 1 次并 m
 
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `npx vitest run tests/association.test.ts`
+Run: `pnpm exec vitest run tests/association.test.ts`
 Expected: FAIL。
 
 - [ ] **Step 3: 写最小代码并接线**
@@ -540,7 +551,7 @@ Expected: FAIL。
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run && npx tsc --noEmit && npm run build`
+Run: `pnpm exec vitest run && pnpm exec tsc --noEmit && pnpm run build`
 Expected: 全部 PASS，类型检查与构建退出码 0。
 
 - [ ] **Step 5: 提交**
@@ -562,12 +573,12 @@ git add -A && git commit -m "feat: 默认关联命令、重载命令与激活接
 
 - [ ] **Step 1: 构建并检查产物**
 
-Run: `npm run build && ls -lh dist/media/pdfium.wasm dist/media/fonts | head`
+Run: `pnpm run build && ls -lh dist/media/pdfium.wasm dist/media/fonts | head`
 Expected: wasm 约 4.6 MB，字体目录含 `NotoSansHans-Regular.otf`、`NotoSansHans-Bold.otf`、4 个 `NotoSans-*.ttf`。
 
 - [ ] **Step 2: 打包**
 
-Run: `npx vsce package --no-dependencies -o dist/embedpdf-preview.vsix`
+Run: `pnpm exec vsce package --no-dependencies -o dist/embedpdf-preview.vsix`
 Expected: 生成 `.vsix`，输出中无 “WARNING Missing repository field” 以外的报错。
 
 - [ ] **Step 3: 手工清单（F5 启动扩展宿主）**
@@ -584,6 +595,7 @@ Expected: 生成 `.vsix`，输出中无 “WARNING Missing repository field” �
 - [ ] 用 `mv` 替换 PDF，只重载一次、无删除提示。
 - [ ] 同一 PDF 已打开时再双击，聚焦已有编辑器。
 - [ ] 未设默认时，激活后通知只出现一次。
+- [ ] 打开命令面板“开发者: 打开 Webview 开发者工具”，网络面板刷新页面，确认没有 `fonts.googleapis.com`、`fonts.gstatic.com`、`cdn.jsdelivr.net` 请求。
 
 - [ ] **Step 4: 写 README**
 
