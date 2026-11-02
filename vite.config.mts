@@ -6,9 +6,8 @@ import react from '@vitejs/plugin-react';
 const entry = fileURLToPath(new URL('src/webview/main.tsx', import.meta.url));
 
 /**
- * Vite 6 的 ES lib 构建固定 `minifyWhitespace=false`（`resolveEsbuildTranspileOptions`），
- * 即使 `build.minify` 与 `esbuild.minifyWhitespace` 都打开也只会压标识符与语法。
- * 这里在 bundle 生成后再做一次完整 esbuild minify，保留固定文件名与输出目录。
+ * Vite 8 的 lib 构建仍不会压缩空白（只由 oxc 做语法/标识符处理），产物会多出
+ * 约 0.5 MB。这里继续用 esbuild 做一次完整压缩；输出文件名与目录保持不变。
  */
 function minifyWebviewBundle(): Plugin {
   return {
@@ -73,18 +72,19 @@ export default defineConfig({
     emptyOutDir: false,
     target: 'es2022',
     cssCodeSplit: false,
-    minify: 'esbuild',
+    // CSS 由 Vite/oxc 压缩；JS 另由 minifyWebviewBundle 做完整 esbuild 压缩。
+    minify: 'oxc',
     lib: {
       entry,
       formats: ['es'],
       fileName: () => 'webview.js',
       cssFileName: 'webview',
     },
-    rollupOptions: {
+    rolldownOptions: {
       input: entry,
       // 扩展只加载 dist/webview.js 一个 URL；任何动态分块都会因 CSP/nonce
       // 与固定文件名约定而无法加载，所以强制内联进单文件。
-      output: { inlineDynamicImports: true },
+      output: { codeSplitting: false },
     },
   },
 });

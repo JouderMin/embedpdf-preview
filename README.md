@@ -10,6 +10,8 @@
 
 ## 构建
 
+构建需要 Node.js 22.12 或以上。
+
 1. 运行 `pnpm install`。
 2. 运行 `pnpm run build`。
 3. 运行 `pnpm run package`。

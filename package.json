@@ -8,7 +8,7 @@
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0",
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "categories": [
     "Other"
@@ -60,15 +60,15 @@
     "react-dom": "18.3.1"
   },
   "devDependencies": {
-    "@types/node": "^20.17.0",
+    "@types/node": "^22.20.5",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@types/vscode": "1.85.0",
-    "@vitejs/plugin-react": "4.7.0",
-    "@vscode/vsce": "^3.2.1",
-    "esbuild": "0.25.12",
-    "typescript": "5.9.3",
-    "vite": "6.4.5",
-    "vitest": "3.2.7"
+    "@vitejs/plugin-react": "6.2.1",
+    "@vscode/vsce": "4.1.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
   }
 }
