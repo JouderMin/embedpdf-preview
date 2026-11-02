@@ -4,3 +4,4 @@ media/generated/
 .superpowers/
 *.vsix
 .pnpm-store/
+.agent-teams/

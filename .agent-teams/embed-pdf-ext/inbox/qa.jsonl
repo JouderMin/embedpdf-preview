@@ -1,1 +1,0 @@
-{"id":"d10973c9-2500-496b-b610-06fdeffbbd39","from":"captain","to":"qa","content":"补充约定：本项目一律用 pnpm（`pnpm install`、`pnpm run build`、`pnpm exec vitest`），不用 npm 或 npx。审查时若看到实现者报告里用了 npm/npx，按缺陷记录。","ts":1793627691184,"deliveredAt":1793627691403,"readAt":1793627691600}
