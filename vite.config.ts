@@ -52,6 +52,9 @@ export default defineConfig({
     },
     rollupOptions: {
       input: entry,
+      // 扩展只加载 dist/webview.js 一个 URL；任何动态分块都会因 CSP/nonce
+      // 与固定文件名约定而无法加载，所以强制内联进单文件。
+      output: { inlineDynamicImports: true },
     },
   },
 });

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ReloadController, type ReloadControllerOptions } from '../src/extension/reloadController';
 
 function setup(overrides: Partial<ReloadControllerOptions> = {}) {
-  const readFile = vi.fn(async () => new Uint8Array([1, 2, 3]));
+  const readFile = vi.fn(async (): Promise<Uint8Array> => new Uint8Array([1, 2, 3]));
   const onBytes = vi.fn();
   const onError = vi.fn();
   const controller = new ReloadController({
@@ -158,5 +158,46 @@ describe('ReloadController 生命周期', () => {
     await controller.reloadNow();
     expect(readFile).toHaveBeenCalledTimes(1);
     expect(onBytes).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]), 1);
+  });
+});
+
+describe('ReloadController 事件作废', () => {
+  test('删除作废在途读取，不再发旧字节', async () => {
+    const { controller, readFile, onBytes, onError } = setup();
+    let resolveRead!: (bytes: Uint8Array) => void;
+    readFile.mockImplementation(
+      () =>
+        new Promise<Uint8Array>((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
+
+    controller.notifyChange();
+    await advance(300);
+    expect(readFile).toHaveBeenCalledTimes(1);
+
+    controller.notifyDelete();
+    await advance(1500);
+    expect(onError).toHaveBeenCalledWith('read', expect.any(String));
+
+    resolveRead(new Uint8Array([9]));
+    await advance(0);
+    expect(onBytes).not.toHaveBeenCalled();
+  });
+});
+
+describe('ReloadController 错误分类', () => {
+  test('渲染重试期间读取失败报 read，不报 render', async () => {
+    const { controller, readFile, onError } = setup();
+    readFile.mockRejectedValue(new Error('EACCES'));
+
+    controller.handleRenderFailure();
+    await advance(200);
+    await advance(200);
+    await advance(200);
+    await advance(200);
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith('read', expect.stringContaining('EACCES'));
   });
 });

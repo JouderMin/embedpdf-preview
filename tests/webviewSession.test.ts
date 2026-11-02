@@ -215,3 +215,16 @@ describe('WebviewSession dispose', () => {
     expect(pageState.set).not.toHaveBeenCalled();
   });
 });
+
+describe('WebviewSession 手动重载', () => {
+  test('未 ready 时 reloadNow 不报错，ready 后委托给 controller', async () => {
+    const { session, port, controllers } = createSession();
+    await expect(session.reloadNow()).resolves.toBeUndefined();
+    expect(controllers).toHaveLength(0);
+
+    port.emit({ type: 'ready' });
+    await flush();
+    await session.reloadNow();
+    expect(controllers[0].reloadNow).toHaveBeenCalledTimes(1);
+  });
+});

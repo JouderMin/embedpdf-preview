@@ -4,3 +4,32 @@ body,
   height: 100%;
   margin: 0;
 }
+
+.embedpdf-root {
+  position: relative;
+  height: 100%;
+}
+
+.embedpdf-error {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 10;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  color: var(--vscode-inputValidation-errorForeground, #fff);
+  background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+  border-radius: 4px;
+  transform: translateX(-50%);
+}
+
+.embedpdf-error button {
+  color: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid currentcolor;
+  border-radius: 2px;
+}

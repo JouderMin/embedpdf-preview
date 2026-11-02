@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import type { Theme } from '../shared/protocol';
 import { PageState } from './pageState';
 import { ReloadController } from './reloadController';
+import { WATCH_GLOB, isSameWatchTarget } from './watchTarget';
 import { renderHtml } from './webviewHtml';
 import { WebviewSession } from './webviewSession';
 
@@ -36,9 +37,28 @@ export class PdfPreviewProvider implements vscode.CustomReadonlyEditorProvider {
   static readonly viewType = 'embedpdf.preview';
 
   private readonly pageState: PageState;
+  private readonly sessions = new Map<string, WebviewSession>();
+  private activeKey: string | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.pageState = new PageState(context.globalState);
+  }
+
+  /** 重载当前聚焦的预览；没有活动预览时返回 false。 */
+  reloadActive(): boolean {
+    const session = this.activeKey ? this.sessions.get(this.activeKey) : undefined;
+    if (!session) {
+      return false;
+    }
+    void session.reloadNow();
+    return true;
+  }
+
+  /** 主题变化对所有打开的预览生效。 */
+  setTheme(theme: Theme): void {
+    for (const session of this.sessions.values()) {
+      session.setTheme(theme);
+    }
   }
 
   async openCustomDocument(
@@ -91,16 +111,45 @@ export class PdfPreviewProvider implements vscode.CustomReadonlyEditorProvider {
     });
 
     const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(directoryOf(uri), fileNameOf(uri)),
+      new vscode.RelativePattern(directoryOf(uri), WATCH_GLOB),
     );
+    const targetUri = key;
     const fileSubscriptions = [
-      watcher.onDidChange(() => session.notifyChange()),
-      watcher.onDidDelete(() => session.notifyDelete()),
-      watcher.onDidCreate(() => session.notifyCreate()),
+      watcher.onDidChange((event) => {
+        if (isSameWatchTarget(event.toString(), targetUri)) {
+          session.notifyChange();
+        }
+      }),
+      watcher.onDidDelete((event) => {
+        if (isSameWatchTarget(event.toString(), targetUri)) {
+          session.notifyDelete();
+        }
+      }),
+      watcher.onDidCreate((event) => {
+        if (isSameWatchTarget(event.toString(), targetUri)) {
+          session.notifyCreate();
+        }
+      }),
     ];
+    const viewStateSubscription = panel.onDidChangeViewState((event) => {
+      if (event.webviewPanel.active) {
+        this.activeKey = key;
+      }
+    });
+
+    this.sessions.set(key, session);
+    if (panel.active) {
+      this.activeKey = key;
+    }
+
     panel.onDidDispose(() => {
+      this.sessions.delete(key);
+      if (this.activeKey === key) {
+        this.activeKey = undefined;
+      }
       session.dispose();
       watcher.dispose();
+      viewStateSubscription.dispose();
       for (const subscription of fileSubscriptions) {
         subscription.dispose();
       }

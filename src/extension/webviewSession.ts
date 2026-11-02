@@ -61,6 +61,12 @@ export class WebviewSession {
     this.controller?.notifyCreate();
   }
 
+  /** 命令触发的重载；尚未 ready（还没有 controller）时静默返回。 */
+  async reloadNow(): Promise<void> {
+    if (this.disposed) return;
+    await this.controller?.reloadNow();
+  }
+
   setTheme(theme: Theme): void {
     if (this.disposed) return;
     this.currentTheme = theme;

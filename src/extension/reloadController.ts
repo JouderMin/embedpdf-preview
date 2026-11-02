@@ -66,6 +66,8 @@ export class ReloadController {
   notifyDelete(): void {
     if (this.disposed) return;
     this.clearTimers();
+    // 作废已在途的读取：删除后即使旧读取成功，也不能再发旧字节。
+    this.loadToken += 1;
     this.deleteTimer = setTimeout(() => {
       this.deleteTimer = undefined;
       if (!this.disposed) {
@@ -142,7 +144,7 @@ export class ReloadController {
         return;
       }
       this.readFailures = 0;
-      this.options.onError(kind, errorMessage(error));
+      this.options.onError('read', errorMessage(error));
       return;
     }
     if (this.disposed || token !== this.loadToken) return;
