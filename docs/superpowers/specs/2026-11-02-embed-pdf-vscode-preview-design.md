@@ -139,7 +139,7 @@ WASM：`wasmUrl` 指向 `media/pdfium.wasm` 的 webview URI。`worker` 设为 `f
 - 界面字体与签名字体默认从 Google Fonts 取。把界面字体设为 `null`（键名以包内类型为准，实测写法为 `fonts: { ui: null, signature: null }`，Task 3 核实）。
 - 印章功能默认拉 `@embedpdf/default-stamps` 的 `manifest.json`，加载失败会阻塞预览。只读预览不需要印章，配置 `stamp.manifests = []`。
 
-依据：掘金文章《@embedpdf/vue-pdf-viewer内网使用避坑》（作者 桜吹雪，2026-04-10）与其评论区作者补充。
+依据：掘金文章《@embedpdf/vue-pdf-viewer 内网使用避坑》（作者 桜吹雪，2026-04-10）与其评论区作者补充。
 
 ### 5.5 界面与分类
 

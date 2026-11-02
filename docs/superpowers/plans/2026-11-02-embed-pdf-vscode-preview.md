@@ -232,7 +232,7 @@ node -e "const t=await import('@embedpdf/react-pdf-viewer'); console.log(Object.
 
 目标：得到 `PDFViewerConfig` 的 `theme` 字段形状、`disabledCategories` 的合法值、`fontFallback` 字段名，以及界面字体与印章两个字段（`fonts`、`stamp`）的键名。把结论写进 `src/webview/viewerConfig.ts` 顶部注释（文件、行号或命令）。若 `theme` 不是 `{ colorScheme }`，按实际类型改测试断言。
 
-另需确认 `@embedpdf/snippet` 是否在 `node_modules` 里：pnpm 无幽灵依赖，复制 `pdfium.wasm` 依赖它。不在就加进 dependencies。
+另需确认 `@embedpdf/snippet` 是否在 `node_modules` 里：pnpm 无幽灵依赖，复制 `pdfium.wasm` 依赖该包。不在就加进 dependencies。
 
 - [ ] **Step 2: 写失败的测试**
 
