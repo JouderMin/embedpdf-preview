@@ -196,7 +196,9 @@ Vite 输出固定文件名（`webview.js`、`webview.css`），因为扩展端�
 多个扩展声明 `.pdf` 时，VS Code 首次打开让用户选择并记住。本扩展加两条入口：
 
 - 命令 `embedpdf.setAsDefault`：把 `workbench.editorAssociations` 的 `*.pdf` 写到用户设置，值为 `embedpdf.preview`。写入前弹确认框，说明这会改变其他 PDF 扩展的打开行为。
-- 首次打开时检查：`workbench.editorAssociations` 里 `*.pdf` 不是本扩展时，发一次通知“PDF 预览已安装，设为默认？”。通知用 `globalState` 记已读，只出现一次。
+- 扩展激活时检查：扩展以 `onStartupFinished` 启动，读取 `workbench.editorAssociations` 里 `*.pdf` 的值，不是本扩展时发一次通知“PDF 预览已安装，设为默认？”。通知用 `globalState` 记已读，只出现一次。
+
+说明：通知不能在“首次打开 PDF”时触发，因为未设默认时本扩展根本不会打开 PDF。所以放在扩展激活时。
 
 不静默修改用户设置。用户拒绝后，仍可按命令提示，或自行在设置里改。
 
@@ -224,7 +226,7 @@ Vite 输出固定文件名（`webview.js`、`webview.css`），因为扩展端�
 7. 用临时文件加改名的工具替换 PDF，确认只重载一次、不出现删除提示。
 8. 同一 PDF 已在预览中时再双击，确认聚焦已有编辑器，不新建第二个视图。
 9. 执行“设为默认”命令，确认 `workbench.editorAssociations` 写入，双击 `.pdf` 直接进预览。
-10. 首次打开时未设默认，确认通知只出现一次。
+10. 扩展激活时未设默认，确认通知只出现一次。
 
 ## 7 可自行决定的事项
 
