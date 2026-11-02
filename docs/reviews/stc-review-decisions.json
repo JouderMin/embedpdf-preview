@@ -2,7 +2,7 @@
   "version": 1,
   "decisions": [
     {
-      "id": "53ad55d4d3c251a4e36f6da46647fbfd68401b08b872a17f3e24c80addccbfaa",
+      "id": "fb4744980ee8c3a40029334b82e756f08f028ca517f86d523d47e357e605d115",
       "decision": "keep",
       "reason": "方案对比表需要写明 B 的代价：换文档只能整体重绘。这是读者判断选 A 是否值得的依据，不是讨论过程的自证。"
     }
