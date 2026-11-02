@@ -66,7 +66,7 @@ test('激活事件与命令齐全', () => {
 
 - [ ] **Step 2: 运行测试，确认失败**
 
-Run: `npx vitest run tests/manifest.test.ts`
+Run: `pnpm exec vitest run tests/manifest.test.ts`
 Expected: FAIL，`Cannot find module 'package.json'` 或 `customEditors` 为 undefined。
 
 - [ ] **Step 3: 建立骨架**
@@ -83,7 +83,7 @@ Expected: FAIL，`Cannot find module 'package.json'` 或 `customEditors` 为 und
 
 - [ ] **Step 4: 运行测试与构建**
 
-Run: `npx vitest run tests/manifest.test.ts && npm run build`
+Run: `pnpm exec vitest run tests/manifest.test.ts && pnpm run build`
 Expected: 测试 PASS；构建退出码 0，`dist/extension.js` 与 `dist/media/` 存在。
 
 - [ ] **Step 5: 提交**
@@ -182,7 +182,7 @@ test('flush 立即写，无待写则不调用', async () => {
 
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `npx vitest run tests/protocol.test.ts tests/pageState.test.ts`
+Run: `pnpm exec vitest run tests/protocol.test.ts tests/pageState.test.ts`
 Expected: FAIL，模块不存在。
 
 - [ ] **Step 3: 写最小代码**
@@ -191,7 +191,7 @@ Expected: FAIL，模块不存在。
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run tests/protocol.test.ts tests/pageState.test.ts`
+Run: `pnpm exec vitest run tests/protocol.test.ts tests/pageState.test.ts`
 Expected: PASS。
 
 - [ ] **Step 5: 提交**
@@ -223,7 +223,7 @@ export function renderHtml(input: HtmlInput): string;
 
 - [ ] **Step 1: 核实包内事实**
 
-Run: `npm i`，然后：
+Run: `pnpm install`，然后：
 
 ```bash
 grep -Rho "document-capture\|document-print\|annotation[^\"']*\|redaction[^\"']*" node_modules/@embedpdf/{snippet,plugin-*}/dist 2>/dev/null | sort -u | head -50
@@ -268,7 +268,7 @@ test('HTML 的 CSP 放开 wasm 与字体，且不放开 https', () => {
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run tests/viewerConfig.test.ts tests/webviewHtml.test.ts`
+Run: `pnpm exec vitest run tests/viewerConfig.test.ts tests/webviewHtml.test.ts`
 Expected: PASS。若 Step 1 发现分类名不同，先改 `DISABLED_CATEGORIES` 再跑。
 
 - [ ] **Step 5: 提交**
@@ -322,7 +322,7 @@ test('revision 递增', async () => { /* 两次成功重载 revision 为 1、2 *
 
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `npx vitest run tests/reloadController.test.ts`
+Run: `pnpm exec vitest run tests/reloadController.test.ts`
 Expected: FAIL，模块不存在。
 
 - [ ] **Step 3: 写最小代码**
@@ -331,7 +331,7 @@ Expected: FAIL，模块不存在。
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run tests/reloadController.test.ts`
+Run: `pnpm exec vitest run tests/reloadController.test.ts`
 Expected: PASS。
 
 - [ ] **Step 5: 提交**
@@ -399,7 +399,7 @@ test('dispose 释放消息订阅与 controller', async () => { /* dispose 后 po
 
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `npx vitest run tests/webviewSession.test.ts`
+Run: `pnpm exec vitest run tests/webviewSession.test.ts`
 Expected: FAIL，模块不存在。
 
 - [ ] **Step 3: 写最小代码**
@@ -408,7 +408,7 @@ Expected: FAIL，模块不存在。
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run tests/webviewSession.test.ts && npx tsc --noEmit`
+Run: `pnpm exec vitest run tests/webviewSession.test.ts && pnpm exec tsc --noEmit`
 Expected: PASS，类型检查无错。
 
 - [ ] **Step 5: 提交**
@@ -466,7 +466,7 @@ test('没有旧文档时不调用 close', async () => { /* previous 省略 → c
 
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `npx vitest run tests/loadDocument.test.ts`
+Run: `pnpm exec vitest run tests/loadDocument.test.ts`
 Expected: FAIL，模块不存在。
 
 - [ ] **Step 3: 写最小代码**
@@ -479,7 +479,7 @@ Expected: FAIL，模块不存在。
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run tests/loadDocument.test.ts && npm run build`
+Run: `pnpm exec vitest run tests/loadDocument.test.ts && pnpm run build`
 Expected: PASS，构建退出码 0。
 
 - [ ] **Step 5: 提交**
@@ -529,7 +529,7 @@ test('未关联时只通知一次', async () => { /* 第一次 notify 1 次并 m
 
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `npx vitest run tests/association.test.ts`
+Run: `pnpm exec vitest run tests/association.test.ts`
 Expected: FAIL。
 
 - [ ] **Step 3: 写最小代码并接线**
@@ -540,7 +540,7 @@ Expected: FAIL。
 
 - [ ] **Step 4: 运行，确认通过**
 
-Run: `npx vitest run && npx tsc --noEmit && npm run build`
+Run: `pnpm exec vitest run && pnpm exec tsc --noEmit && pnpm run build`
 Expected: 全部 PASS，类型检查与构建退出码 0。
 
 - [ ] **Step 5: 提交**
@@ -562,12 +562,12 @@ git add -A && git commit -m "feat: 默认关联命令、重载命令与激活接
 
 - [ ] **Step 1: 构建并检查产物**
 
-Run: `npm run build && ls -lh dist/media/pdfium.wasm dist/media/fonts | head`
+Run: `pnpm run build && ls -lh dist/media/pdfium.wasm dist/media/fonts | head`
 Expected: wasm 约 4.6 MB，字体目录含 `NotoSansHans-Regular.otf`、`NotoSansHans-Bold.otf`、4 个 `NotoSans-*.ttf`。
 
 - [ ] **Step 2: 打包**
 
-Run: `npx vsce package --no-dependencies -o dist/embedpdf-preview.vsix`
+Run: `pnpm exec vsce package --no-dependencies -o dist/embedpdf-preview.vsix`
 Expected: 生成 `.vsix`，输出中无 “WARNING Missing repository field” 以外的报错。
 
 - [ ] **Step 3: 手工清单（F5 启动扩展宿主）**

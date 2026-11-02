@@ -182,7 +182,7 @@ WASM：`wasmUrl` 指向 `media/pdfium.wasm` 的 webview URI。`worker` 设为 `f
 
 ### 5.10 构建与打包
 
-npm 脚本：
+pnpm 脚本：
 
 - `build`：esbuild 打包扩展端，Vite 打包 webview，复制资源。
 - `watch`：同上，两个构建器都监听。
