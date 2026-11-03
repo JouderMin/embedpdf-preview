@@ -9,9 +9,10 @@ const input = {
 };
 
 describe('renderHtml', () => {
-  test('CSP 放开 blob 图片、wasm 与字体，且不放开 https', () => {
+  test('CSP 放开 blob 图片、blob worker、wasm 与字体，且不放开 https', () => {
     const html = renderHtml(input);
     expect(html).toContain("script-src 'nonce-n1' 'wasm-unsafe-eval'");
+    expect(html).toContain('worker-src vscode-resource://x blob:');
     expect(html).toContain('font-src vscode-resource://x');
     expect(html).toContain('img-src vscode-resource://x data: blob:');
     expect(html).toContain('nonce="n1"');
@@ -34,7 +35,7 @@ describe('renderHtml', () => {
     expect(html).toContain('src="vscode-resource://x/webview.js"');
     expect(html).toContain('href="vscode-resource://x/webview.css"');
     expect(html).toContain('type="module"');
-    expect(html).toContain('connect-src vscode-resource://x');
+    expect(html).toContain('connect-src vscode-resource://x blob:');
     expect(html).toContain('media-src vscode-resource://x');
   });
 });

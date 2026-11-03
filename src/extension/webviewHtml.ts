@@ -30,7 +30,11 @@ export function renderHtml(input: HtmlInput): string {
     `font-src ${cspSource}`,
     `img-src ${cspSource} data: blob:`,
     `media-src ${cspSource}`,
-    `connect-src ${cspSource}`,
+    // blob: 用于 worker 内读取主线程预取的 wasm/字体 blob URL。
+    `connect-src ${cspSource} blob:`,
+    // worker 引擎用 createObjectURL(new Blob([...])) 创建 Worker，必须显式放行 blob:。
+    // worker 继承本页 CSP，wasm-unsafe-eval 与 connect-src 会一并生效。
+    `worker-src ${cspSource} blob:`,
     `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,
   ].join('; ');
 
