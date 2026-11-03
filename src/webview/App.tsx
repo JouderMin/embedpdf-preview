@@ -10,6 +10,7 @@ import {
   type ScrollCapabilityLike,
   type ZoomCapabilityLike,
 } from './loadDocument';
+import { prepareViewerAssets, releaseViewerAssets, type ViewerAssets } from './viewerAssets';
 import { createViewerConfig } from './viewerConfig';
 
 type DocumentMessage = Extract<HostToWebview, { type: 'document' }>;
@@ -28,9 +29,6 @@ interface ScrollRuntime extends ScrollCapabilityLike {
   ): () => void;
 }
 
-const WASM_URL = new URL(/* @vite-ignore */ './media/pdfium.wasm', import.meta.url).toString();
-const FONT_BASE_URL = new URL(/* @vite-ignore */ './media/fonts/', import.meta.url).toString();
-
 function capabilityOf<T>(registry: Registry, name: string): T | undefined {
   const provider = registry.getCapabilityProvider(name);
   if (!provider || typeof provider.provides !== 'function') {
@@ -46,6 +44,8 @@ function errorMessage(error: unknown): string {
 export function App() {
   const [theme, setTheme] = useState<Theme>('light');
   const [error, setError] = useState<{ kind: 'read' | 'render'; message: string } | null>(null);
+  const [assets, setAssets] = useState<ViewerAssets | null>(null);
+  const [assetAttempt, setAssetAttempt] = useState(0);
 
   const containerRef = useRef<EmbedPdfContainer | null>(null);
   const managerRef = useRef<DocumentManagerRuntime | undefined>(undefined);
@@ -178,6 +178,32 @@ export function App() {
     };
   }, []);
 
+  // 主线程预取 wasm 与字体，换成 blob URL 后再交给 worker 引擎。
+  // worker 内直接 fetch webview 资源会卡在 service worker 超时（见 viewerAssets.ts）。
+  useEffect(() => {
+    const controller = new AbortController();
+    let loaded: ViewerAssets | null = null;
+    prepareViewerAssets(controller.signal)
+      .then((value) => {
+        loaded = value;
+        setAssets(value);
+      })
+      .catch((loadError: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        const message = errorMessage(loadError);
+        setError({ kind: 'render', message });
+        postToHost({ type: 'error', kind: 'render', message });
+      });
+    return () => {
+      controller.abort();
+      if (loaded) {
+        releaseViewerAssets(loaded);
+      }
+    };
+  }, [assetAttempt]);
+
   useEffect(() => {
     // PDFViewer 的 effect 依赖为空，后续 config.theme 不会重建 viewer；
     // 主题切换必须走自定义元素的 setTheme。
@@ -186,29 +212,42 @@ export function App() {
 
   const config = useMemo(
     () =>
-      createViewerConfig({
-        theme,
-        wasmUrl: WASM_URL,
-        fontBaseUrl: FONT_BASE_URL,
-      }),
-    [theme],
+      assets
+        ? createViewerConfig({
+            theme,
+            wasmUrl: assets.wasmUrl,
+            fontBaseUrl: '',
+            fontUrls: assets.fontUrls,
+          })
+        : null,
+    [theme, assets],
   );
 
   return (
     <div className="embedpdf-root">
-      <PDFViewer
-        config={config}
-        style={{ width: '100%', height: '100%' }}
-        onInit={(container) => {
-          containerRef.current = container;
-          container.setTheme(theme);
-        }}
-        onReady={handleRegistryReady}
-      />
+      {config ? (
+        <PDFViewer
+          config={config}
+          style={{ width: '100%', height: '100%' }}
+          onInit={(container) => {
+            containerRef.current = container;
+            container.setTheme(theme);
+          }}
+          onReady={handleRegistryReady}
+        />
+      ) : null}
       {error ? (
         <div className="embedpdf-error" role="alert">
           <span>{error.kind === 'read' ? '无法读取文件' : 'PDF 无法渲染'}</span>
-          <button type="button" onClick={() => postToHost({ type: 'retry' })}>
+          <button
+            type="button"
+            onClick={() => {
+              if (!assets) {
+                setAssetAttempt((value) => value + 1);
+              }
+              postToHost({ type: 'retry' });
+            }}
+          >
             重试
           </button>
         </div>

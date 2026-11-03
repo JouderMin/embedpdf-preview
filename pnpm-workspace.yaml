@@ -2,3 +2,5 @@ allowBuilds:
   '@vscode/vsce-sign': false
   esbuild: true
   keytar: false
+minimumReleaseAgeExclude:
+  - '@vitejs/plugin-react@6.2.1'

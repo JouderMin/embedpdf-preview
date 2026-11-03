@@ -1,6 +1,6 @@
 import { FontCharset } from '@embedpdf/models';
 import { describe, expect, test } from 'vitest';
-import { DISABLED_CATEGORIES, createViewerConfig } from '../src/webview/viewerConfig';
+import { DISABLED_CATEGORIES, FONT_FILES, createViewerConfig } from '../src/webview/viewerConfig';
 
 describe('DISABLED_CATEGORIES', () => {
   test('关闭写入类与文件类功能，且无重复', () => {
@@ -33,7 +33,7 @@ describe('createViewerConfig', () => {
 
   test('配置固定项', () => {
     const config = createViewerConfig(input);
-    expect(config.worker).toBe(false);
+    expect(config.worker).toBe(true);
     expect(config.tabBar).toBe('never');
     expect(config.wasmUrl).toBe(input.wasmUrl);
     expect(config.disabledCategories).toEqual([...DISABLED_CATEGORIES]);
@@ -48,15 +48,33 @@ describe('createViewerConfig', () => {
     expect(config.viewport).toBeUndefined();
   });
 
-  test('worker:false 时运行时从 wasmUrl 取 media/pdfium.wasm，而非内联副本', () => {
+  test('worker 模式仍从 wasmUrl 取 media/pdfium.wasm，而非内联副本', () => {
     const config = createViewerConfig({
       ...input,
       wasmUrl: 'vscode-resource://w/dist/media/pdfium.wasm',
     });
-    expect(config.worker).toBe(false);
+    expect(config.worker).toBe(true);
     expect(config.wasmUrl).toBe('vscode-resource://w/dist/media/pdfium.wasm');
     expect(config.wasmUrl).toContain('/media/pdfium.wasm');
     expect(JSON.stringify(config)).not.toContain('data:application/wasm');
+  });
+
+  test('提供预取 fontUrls 时全部改用 blob URL', () => {
+    const fontUrls = Object.fromEntries(FONT_FILES.map((file) => [file, `blob:${file}`]));
+    const config = createViewerConfig({ ...input, fontUrls });
+    expect(config.fontFallback?.fonts?.[FontCharset.GB2312]).toEqual([
+      { url: 'blob:NotoSansHans-Regular.otf', weight: 400 },
+      { url: 'blob:NotoSansHans-Bold.otf', weight: 700 },
+    ]);
+    for (const charset of [FontCharset.CYRILLIC, FontCharset.GREEK, FontCharset.VIETNAMESE]) {
+      expect(config.fontFallback?.fonts?.[charset]).toEqual([
+        { url: 'blob:NotoSans-Regular.ttf', weight: 400 },
+        { url: 'blob:NotoSans-Italic.ttf', weight: 400, italic: true },
+        { url: 'blob:NotoSans-Bold.ttf', weight: 700 },
+        { url: 'blob:NotoSans-BoldItalic.ttf', weight: 700, italic: true },
+      ]);
+    }
+    expect(JSON.stringify(config)).not.toContain('vscode-resource://f/');
   });
 
   test('中文字体回退到本地 Noto Sans CJK', () => {

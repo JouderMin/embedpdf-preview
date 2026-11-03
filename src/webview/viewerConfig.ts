@@ -56,13 +56,35 @@ export const DISABLED_CATEGORIES: readonly string[] = [
   'document-close',
 ];
 
+/** 打包进 dist/media/fonts 的字体文件；worker 模式需要主线程逐个预取后替换为 blob URL。 */
+export const FONT_FILES = [
+  'NotoSansHans-Regular.otf',
+  'NotoSansHans-Bold.otf',
+  'NotoSans-Regular.ttf',
+  'NotoSans-Italic.ttf',
+  'NotoSans-Bold.ttf',
+  'NotoSans-BoldItalic.ttf',
+] as const;
+
 export interface ViewerConfigInput {
   theme: 'light' | 'dark';
   wasmUrl: string;
   fontBaseUrl: string;
+  /**
+   * 主线程预取好的字体 blob URL，键为字体文件名。worker 里 fetch
+   * `vscode-resource`/`vscode-cdn.net` 地址会被 webview service worker 判为
+   * 无关联客户端而超时（返回 "Request Timeout"），因此 worker 模式必须使用 blob URL。
+   * 未提供的文件回退到 fontBaseUrl 拼接。
+   */
+  fontUrls?: Readonly<Record<string, string>>;
 }
 
-function fontUrl(base: string, name: string): string {
+function fontUrl(input: ViewerConfigInput, name: string): string {
+  const prefetched = input.fontUrls?.[name];
+  if (prefetched) {
+    return prefetched;
+  }
+  const base = input.fontBaseUrl;
   return `${base.endsWith('/') ? base : `${base}/`}${name}`;
 }
 
@@ -75,13 +97,15 @@ const LATIN_FONTS = [
 
 export function createViewerConfig(input: ViewerConfigInput): PDFViewerConfig {
   const latinFonts = LATIN_FONTS.map(({ file, weight, italic }) => ({
-    url: fontUrl(input.fontBaseUrl, file),
+    url: fontUrl(input, file),
     weight,
     ...(italic ? { italic: true } : {}),
   }));
 
   return {
-    worker: false,
+    // worker:true 时 PDFium 在 Web Worker 中运行（snippet 默认值），解析/渲染
+    // 不占用 webview 主线程。worker 由 blob URL 创建，CSP 需放行 worker-src blob:。
+    worker: true,
     tabBar: 'never',
     wasmUrl: input.wasmUrl,
     theme: { preference: input.theme },
@@ -96,8 +120,8 @@ export function createViewerConfig(input: ViewerConfigInput): PDFViewerConfig {
     fontFallback: {
       fonts: {
         [FontCharset.GB2312]: [
-          { url: fontUrl(input.fontBaseUrl, 'NotoSansHans-Regular.otf'), weight: 400 },
-          { url: fontUrl(input.fontBaseUrl, 'NotoSansHans-Bold.otf'), weight: 700 },
+          { url: fontUrl(input, 'NotoSansHans-Regular.otf'), weight: 400 },
+          { url: fontUrl(input, 'NotoSansHans-Bold.otf'), weight: 700 },
         ],
         [FontCharset.CYRILLIC]: latinFonts,
         [FontCharset.GREEK]: latinFonts,
