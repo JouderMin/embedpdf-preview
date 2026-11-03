@@ -186,26 +186,27 @@ function finiteNumber(value: unknown): value is number {
  */
 export function toPersistedViewState(
   state: ViewState,
-): PersistedViewState & { zoom: PersistedZoom } {
+): (PersistedViewState & { zoom: PersistedZoom }) | undefined {
   const scale = positiveNumber(state.scale)
     ? state.scale
     : positiveNumber(state.zoom?.scale)
       ? state.zoom.scale
-      : 1;
+      : undefined;
+  // 拿不到实际比例就无法把像素换算成页坐标。此时宁可不上报，
+  // 也不要用伪造的 100% 覆盖已有的好状态（R16-4）。
+  if (!scale) {
+    return undefined;
+  }
   const offsetX = finiteNumber(state.offsetX) ? state.offsetX : 0;
   const offsetY = finiteNumber(state.offsetY) ? state.offsetY : 0;
   const page = Number.isFinite(state.page) && state.page >= 1 ? Math.trunc(state.page) : 1;
 
-  let zoom: PersistedZoom;
-  if (state.zoom) {
-    zoom =
-      typeof state.zoom.level === 'number'
-        ? { mode: 'numeric', level: positiveNumber(state.zoom.level) ? state.zoom.level : scale }
-        : { mode: state.zoom.level, level: scale };
-  } else {
-    // 拿不到 zoom 能力时仍记录 metrics 的实际比例，至少不丢页内位置。
-    zoom = { mode: 'numeric', level: scale };
-  }
+  // numeric 一律以 metrics 的实际 scale 为权威；fit/automatic 保留模式。
+  // level 始终写实际 scale，读取时直接用它换算页坐标（R16-3）。
+  const zoom: PersistedZoom = {
+    mode: state.zoom && typeof state.zoom.level !== 'number' ? state.zoom.level : 'numeric',
+    level: scale,
+  };
 
   return { v: 1, page, x: offsetX / scale, y: offsetY / scale, zoom };
 }

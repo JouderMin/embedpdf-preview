@@ -83,6 +83,10 @@ export function App() {
     const persisted = toPersistedViewState(
       captureViewState(scroll, zoomRef.current, current.documentId, current.page),
     );
+    if (!persisted) {
+      // 读不到实际缩放比例时不上报，避免把已有状态覆盖成 100%/页首。
+      return;
+    }
     current.page = persisted.page;
     postToHost({
       type: 'viewState',
@@ -238,6 +242,12 @@ export function App() {
       if (reportTimerRef.current !== undefined) {
         clearTimeout(reportTimerRef.current);
         reportTimerRef.current = undefined;
+        // 卸载前补发最后一次待去抖的状态，best-effort，失败不影响卸载。
+        try {
+          reportViewState();
+        } catch {
+          // 忽略卸载期的读取/发送失败。
+        }
       }
       for (const cleanup of cleanupsRef.current) {
         cleanup();

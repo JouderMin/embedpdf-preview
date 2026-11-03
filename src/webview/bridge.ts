@@ -1,4 +1,9 @@
-import type { HostToWebview, Theme, WebviewToHost } from '../shared/protocol';
+import {
+  isPersistedViewState,
+  type HostToWebview,
+  type Theme,
+  type WebviewToHost,
+} from '../shared/protocol';
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
@@ -33,12 +38,14 @@ function isHostToWebview(value: unknown): value is HostToWebview {
         typeof value.uri === 'string' &&
         typeof value.name === 'string' &&
         typeof value.page === 'number' &&
+        isPersistedViewState(value.viewState) &&
         isTheme(value.theme)
       );
     case 'document':
       return (
         value.bytes instanceof ArrayBuffer &&
         typeof value.page === 'number' &&
+        isPersistedViewState(value.viewState) &&
         typeof value.revision === 'number'
       );
     case 'theme':

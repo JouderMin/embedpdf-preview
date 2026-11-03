@@ -573,7 +573,7 @@ describe('跨重启的完整视图状态', () => {
       page: 4,
       x: 75,
       y: 150,
-      zoom: { mode: 'numeric', level: 1.5 },
+      zoom: { mode: 'numeric', level: 2 },
     });
   });
 
@@ -667,5 +667,50 @@ describe('跨重启的完整视图状态', () => {
     await apply(manager, scroll, { targetPage: 6 });
 
     expect(scrollToPage).toHaveBeenCalledWith({ pageNumber: 6, behavior: 'instant' });
+  });
+
+  test('numeric 的 level 与 metrics scale 不一致时以实际 scale 为准', async () => {
+    const metrics: ScrollMetricsLike = {
+      currentPage: 5,
+      scrollOffset: { x: 0, y: 1000 },
+      pageVisibilityMetrics: [
+        { pageNumber: 5, viewportX: 0, viewportY: 0, scaled: { pageX: 0, pageY: 300, scale: 2 } },
+      ],
+    };
+    const { manager, scroll, scrollToPage } = setup({ totalPages: 10, currentPage: 5, metrics });
+    const { zoom, requestZoom } = setupZoom(1.5, 2);
+    const captured = captureViewState(scroll, zoom, 'old', 5);
+    const persisted = toPersistedViewState(captured);
+
+    expect(persisted).toMatchObject({
+      page: 5,
+      y: 150,
+      zoom: { mode: 'numeric', level: 2 },
+    });
+
+    await apply(manager, scroll, {
+      restore: fromPersistedViewState(persisted!),
+      targetPage: 1,
+      zoom,
+    });
+
+    expect(requestZoom).toHaveBeenCalledWith(2);
+    expect(scrollToPage).toHaveBeenCalledWith({
+      pageNumber: 5,
+      behavior: 'instant',
+      pageCoordinates: { x: 0, y: 150 },
+    });
+  });
+
+  test('capture 完全拿不到 scale 时不伪造 100% 状态', () => {
+    const brokenScroll = {
+      forDocument: () => {
+        throw new Error('no metrics');
+      },
+      onLayoutReady: () => () => undefined,
+    } as unknown as ScrollCapabilityLike;
+    const captured = captureViewState(brokenScroll, undefined, 'old', 3);
+
+    expect(toPersistedViewState(captured)).toBeUndefined();
   });
 });
