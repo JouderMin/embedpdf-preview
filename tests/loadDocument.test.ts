@@ -2,6 +2,8 @@ import { describe, expect, test, vi } from 'vitest';
 import {
   applyNewDocument,
   captureViewState,
+  fromPersistedViewState,
+  toPersistedViewState,
   type DocumentManagerCapability,
   type PdfTaskLike,
   type ScrollCapabilityLike,
@@ -185,6 +187,7 @@ function apply(
   scroll: ScrollCapabilityLike,
   options: {
     previous?: ViewState & { documentId: string };
+    restore?: ViewState;
     targetPage?: number;
     zoom?: ZoomCapabilityLike;
   } = {},
@@ -197,6 +200,7 @@ function apply(
     scroll,
     zoom: options.zoom,
     previous: options.previous,
+    restore: options.restore,
   });
 }
 
@@ -547,5 +551,121 @@ describe('重载后的缩放与页内位置', () => {
 
     expect(requestZoom).not.toHaveBeenCalled();
     expect(scrollToPage).not.toHaveBeenCalled();
+  });
+});
+
+describe('跨重启的完整视图状态', () => {
+  test('像素偏移换算成页坐标，缩放保留 mode 与实际比例', () => {
+    const metrics: ScrollMetricsLike = {
+      currentPage: 4,
+      scrollOffset: { x: 0, y: 1000 },
+      pageVisibilityMetrics: [
+        { pageNumber: 4, viewportX: 20, viewportY: 30, scaled: { pageX: 170, pageY: 330, scale: 2 } },
+      ],
+    };
+    const { scroll } = setup({ totalPages: 10, currentPage: 4, metrics });
+    const { zoom } = setupZoom(1.5, 2);
+
+    const persisted = toPersistedViewState(captureViewState(scroll, zoom, 'old', 4));
+
+    expect(persisted).toEqual({
+      v: 1,
+      page: 4,
+      x: 75,
+      y: 150,
+      zoom: { mode: 'numeric', level: 1.5 },
+    });
+  });
+
+  test('fit 模式持久化为 mode，level 记录实际比例', () => {
+    const metrics: ScrollMetricsLike = {
+      currentPage: 2,
+      scrollOffset: { x: 0, y: 0 },
+      pageVisibilityMetrics: [
+        { pageNumber: 2, viewportX: 0, viewportY: 40, scaled: { pageX: 0, pageY: 190, scale: 1.25 } },
+      ],
+    };
+    const { scroll } = setup({ totalPages: 10, currentPage: 2, metrics });
+    const { zoom } = setupZoom('fit-page', 1.25);
+
+    expect(toPersistedViewState(captureViewState(scroll, zoom, 'old', 2))).toEqual({
+      v: 1,
+      page: 2,
+      x: 0,
+      y: 120,
+      zoom: { mode: 'fit-page', level: 1.25 },
+    });
+  });
+
+  test('首屏用持久化状态恢复：先按 mode 缩放，再按页坐标滚动', async () => {
+    const { manager, scroll, scrollToPage, closeDocument, forDocument } = setup({ totalPages: 10 });
+    const { zoom, requestZoom } = setupZoom('fit-page', 1.25);
+    const restore = fromPersistedViewState({
+      v: 1,
+      page: 4,
+      x: 100,
+      y: -40,
+      zoom: { mode: 'fit-page', level: 1.25 },
+    });
+
+    await expect(apply(manager, scroll, { restore, targetPage: 1, zoom })).resolves.toEqual({
+      documentId: 'new',
+      page: 4,
+    });
+
+    expect(forDocument).toHaveBeenCalledWith('new');
+    expect(requestZoom).toHaveBeenCalledWith('fit-page');
+    expect(requestZoom.mock.invocationCallOrder[0]).toBeLessThan(
+      scrollToPage.mock.invocationCallOrder[0],
+    );
+    expect(scrollToPage).toHaveBeenCalledWith({
+      pageNumber: 4,
+      behavior: 'instant',
+      pageCoordinates: { x: 100, y: -40 },
+    });
+    expect(closeDocument).not.toHaveBeenCalled();
+  });
+
+  test('numeric 缩放按 level 恢复，页码越界时夹到末页但保留坐标', async () => {
+    const { manager, scroll, scrollToPage } = setup({ totalPages: 3 });
+    const { zoom, requestZoom } = setupZoom(1.5, 1.5);
+    const restore = fromPersistedViewState({
+      v: 1,
+      page: 9,
+      x: 12,
+      y: 34,
+      zoom: { mode: 'numeric', level: 1.5 },
+    });
+
+    await expect(apply(manager, scroll, { restore, targetPage: 1, zoom })).resolves.toEqual({
+      documentId: 'new',
+      page: 3,
+    });
+
+    expect(requestZoom).toHaveBeenCalledWith(1.5);
+    expect(scrollToPage).toHaveBeenCalledWith({
+      pageNumber: 3,
+      behavior: 'instant',
+      pageCoordinates: { x: 12, y: 34 },
+    });
+  });
+
+  test('旧 number 只有页码时恢复页码，不请求缩放', async () => {
+    const { manager, scroll, scrollToPage } = setup({ totalPages: 10 });
+    const { zoom, requestZoom } = setupZoom(1.5, 1.5);
+    const restore = fromPersistedViewState({ v: 1, page: 2, x: 0, y: 0 });
+
+    await apply(manager, scroll, { restore, targetPage: 1, zoom });
+
+    expect(requestZoom).not.toHaveBeenCalled();
+    expect(scrollToPage).toHaveBeenCalledWith({ pageNumber: 2, behavior: 'instant' });
+  });
+
+  test('没有 restore 时保持原行为：按 targetPage 跳转且不传坐标', async () => {
+    const { manager, scroll, scrollToPage } = setup({ totalPages: 10 });
+
+    await apply(manager, scroll, { targetPage: 6 });
+
+    expect(scrollToPage).toHaveBeenCalledWith({ pageNumber: 6, behavior: 'instant' });
   });
 });

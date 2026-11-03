@@ -6,6 +6,8 @@ import { onHostMessage, postToHost } from './bridge';
 import {
   applyNewDocument,
   captureViewState,
+  fromPersistedViewState,
+  toPersistedViewState,
   type DocumentManagerCapability,
   type ScrollCapabilityLike,
   type ZoomCapabilityLike,
@@ -27,6 +29,11 @@ interface ScrollRuntime extends ScrollCapabilityLike {
   onPageChange?(
     handler: (event: { documentId: string; pageNumber: number }) => void,
   ): () => void;
+  onScroll?(handler: (event: { documentId: string }) => void): () => void;
+}
+
+interface ZoomRuntime extends ZoomCapabilityLike {
+  onZoomChange?(handler: (event: { documentId: string }) => void): () => void;
 }
 
 function capabilityOf<T>(registry: Registry, name: string): T | undefined {
@@ -50,17 +57,51 @@ export function App() {
   const containerRef = useRef<EmbedPdfContainer | null>(null);
   const managerRef = useRef<DocumentManagerRuntime | undefined>(undefined);
   const scrollRef = useRef<ScrollRuntime | undefined>(undefined);
-  const zoomRef = useRef<ZoomCapabilityLike | undefined>(undefined);
+  const zoomRef = useRef<ZoomRuntime | undefined>(undefined);
   const currentRef = useRef<{ documentId: string; page: number } | undefined>(undefined);
   const pendingRef = useRef<DocumentMessage | undefined>(undefined);
   const processingRef = useRef(false);
   const nameRef = useRef('document.pdf');
   const cleanupsRef = useRef<Array<() => void>>([]);
   const processRef = useRef<() => Promise<void>>(async () => undefined);
+  const reportTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const reportRender = (message: string) => {
     setError({ kind: 'render', message });
     postToHost({ type: 'error', kind: 'render', message });
+  };
+
+  const reportViewState = () => {
+    if (processingRef.current) {
+      return;
+    }
+    const current = currentRef.current;
+    const scroll = scrollRef.current;
+    if (!current || !scroll) {
+      return;
+    }
+    const persisted = toPersistedViewState(
+      captureViewState(scroll, zoomRef.current, current.documentId, current.page),
+    );
+    current.page = persisted.page;
+    postToHost({
+      type: 'viewState',
+      page: persisted.page,
+      x: persisted.x,
+      y: persisted.y,
+      zoom: persisted.zoom,
+    });
+  };
+
+  // 页码/缩放/滚动共用 300ms 尾部去抖；滚动停止或缩放结束后只发最后状态。
+  const scheduleViewStateReport = () => {
+    if (reportTimerRef.current !== undefined) {
+      clearTimeout(reportTimerRef.current);
+    }
+    reportTimerRef.current = setTimeout(() => {
+      reportTimerRef.current = undefined;
+      reportViewState();
+    }, 300);
   };
 
   const processPending = async (): Promise<void> => {
@@ -90,14 +131,17 @@ export function App() {
           const result = await applyNewDocument({
             bytes: message.bytes,
             name: nameRef.current,
-            targetPage: previous?.page ?? message.page,
+            targetPage: previous?.page ?? message.viewState.page,
             manager,
             scroll,
             zoom: zoomRef.current,
             previous,
+            // 首次打开没有旧文档时，从 globalState 恢复缩放与页内偏移。
+            restore: previous ? undefined : fromPersistedViewState(message.viewState),
           });
           currentRef.current = { documentId: result.documentId, page: result.page };
           setError(null);
+          scheduleViewStateReport();
         } catch (loadError) {
           reportRender(errorMessage(loadError));
         }
@@ -111,7 +155,7 @@ export function App() {
   const handleRegistryReady = (registry: Registry) => {
     managerRef.current = capabilityOf<DocumentManagerRuntime>(registry, 'document-manager');
     scrollRef.current = capabilityOf<ScrollRuntime>(registry, 'scroll');
-    zoomRef.current = capabilityOf<ZoomCapabilityLike>(registry, 'zoom');
+    zoomRef.current = capabilityOf<ZoomRuntime>(registry, 'zoom');
 
     if (!managerRef.current || !scrollRef.current) {
       reportRender('PDF 查看器未就绪');
@@ -127,11 +171,31 @@ export function App() {
       const current = currentRef.current;
       if (current && event.documentId === current.documentId) {
         current.page = event.pageNumber;
-        postToHost({ type: 'page', page: event.pageNumber });
+        scheduleViewStateReport();
       }
     });
     if (pageSubscription) {
       cleanupsRef.current.push(pageSubscription);
+    }
+
+    const scrollSubscription = scrollRef.current.onScroll?.((event) => {
+      const current = currentRef.current;
+      if (current && event.documentId === current.documentId) {
+        scheduleViewStateReport();
+      }
+    });
+    if (scrollSubscription) {
+      cleanupsRef.current.push(scrollSubscription);
+    }
+
+    const zoomSubscription = zoomRef.current?.onZoomChange?.((event) => {
+      const current = currentRef.current;
+      if (current && event.documentId === current.documentId) {
+        scheduleViewStateReport();
+      }
+    });
+    if (zoomSubscription) {
+      cleanupsRef.current.push(zoomSubscription);
     }
 
     const errorSubscription = managerRef.current.onDocumentError?.((event) => {
@@ -171,6 +235,10 @@ export function App() {
 
     return () => {
       unsubscribe();
+      if (reportTimerRef.current !== undefined) {
+        clearTimeout(reportTimerRef.current);
+        reportTimerRef.current = undefined;
+      }
       for (const cleanup of cleanupsRef.current) {
         cleanup();
       }

@@ -1,4 +1,9 @@
-import type { HostToWebview, WebviewToHost } from '../shared/protocol';
+import type {
+  HostToWebview,
+  PersistedViewState,
+  PersistedZoom,
+  WebviewToHost,
+} from '../shared/protocol';
 
 /**
  * `@embedpdf/models` 的 Task 最小真实形状：加载任务由 `toPromise()` 等待，
@@ -112,6 +117,8 @@ export interface ApplyNewDocumentInput {
   scroll: ScrollCapabilityLike;
   zoom?: ZoomCapabilityLike;
   previous?: PreviousViewState;
+  /** 首次加载时从 globalState 恢复的状态；不关闭旧文档。 */
+  restore?: ViewState;
   /** 等待新文档首屏布局的上限，防止损坏文档让界面永久挂起。 */
   layoutTimeoutMs?: number;
 }
@@ -163,6 +170,62 @@ async function closeQuietly(
   } catch (error) {
     console.warn(`${label}失败`, error);
   }
+}
+
+function positiveNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function finiteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+/**
+ * 把内存中的像素偏移换算成可跨重启复用的页坐标。
+ * 缩放模式保留 fit 字符串；level 在 numeric 时是缩放比例，fit 时是实际比例兜底。
+ */
+export function toPersistedViewState(
+  state: ViewState,
+): PersistedViewState & { zoom: PersistedZoom } {
+  const scale = positiveNumber(state.scale)
+    ? state.scale
+    : positiveNumber(state.zoom?.scale)
+      ? state.zoom.scale
+      : 1;
+  const offsetX = finiteNumber(state.offsetX) ? state.offsetX : 0;
+  const offsetY = finiteNumber(state.offsetY) ? state.offsetY : 0;
+  const page = Number.isFinite(state.page) && state.page >= 1 ? Math.trunc(state.page) : 1;
+
+  let zoom: PersistedZoom;
+  if (state.zoom) {
+    zoom =
+      typeof state.zoom.level === 'number'
+        ? { mode: 'numeric', level: positiveNumber(state.zoom.level) ? state.zoom.level : scale }
+        : { mode: state.zoom.level, level: scale };
+  } else {
+    // 拿不到 zoom 能力时仍记录 metrics 的实际比例，至少不丢页内位置。
+    zoom = { mode: 'numeric', level: scale };
+  }
+
+  return { v: 1, page, x: offsetX / scale, y: offsetY / scale, zoom };
+}
+
+/** 把持久化页坐标转回内存 ViewState；恢复时再按同一比例还原像素。 */
+export function fromPersistedViewState(state: PersistedViewState): ViewState {
+  const zoom = state.zoom;
+  if (!zoom) {
+    // 旧 number 只有页码，不凭空产生 pageCoordinates。
+    return { page: state.page };
+  }
+  const scale = positiveNumber(zoom.level) ? zoom.level : 1;
+  const level = zoom.mode === 'numeric' ? zoom.level : zoom.mode;
+  return {
+    page: state.page,
+    offsetX: state.x * scale,
+    offsetY: state.y * scale,
+    scale,
+    zoom: { level, scale },
+  };
 }
 
 /**
@@ -332,30 +395,28 @@ export async function applyNewDocument(
       throw new Error('文档没有可显示的页面');
     }
 
-    const page = clampPage(input.targetPage, layout.totalPages);
+    // 首次加载用 restore，重载用 previous；两者都不改 targetPage 的既有语义。
+    const view = input.previous ?? input.restore;
+    // 重载仍以调用方传入的 targetPage 为准；只有首次恢复用持久化页码。
+    const targetPage = input.restore?.page ?? input.targetPage;
+    const page = clampPage(targetPage, layout.totalPages);
     const scrollScope = input.scroll.forDocument(newDocumentId);
-    const previous = input.previous;
 
     // 先恢复缩放：scrollToPage 的 pageCoordinates 会按当前 coreDoc.scale 缩放。
-    if (previous?.zoom && input.zoom) {
+    if (view?.zoom && input.zoom) {
       try {
-        input.zoom.forDocument(newDocumentId).requestZoom(previous.zoom.level);
+        input.zoom.forDocument(newDocumentId).requestZoom(view.zoom.level);
       } catch (error) {
         console.warn('恢复缩放失败', error);
       }
     }
 
-    const hasOffsetX = typeof previous?.offsetX === 'number';
-    const hasOffsetY = typeof previous?.offsetY === 'number';
-    const offsetX =
-      hasOffsetX && Number.isFinite(previous.offsetX) ? (previous.offsetX as number) : 0;
-    const offsetY =
-      hasOffsetY && Number.isFinite(previous.offsetY) ? (previous.offsetY as number) : 0;
-    const recordedScale = previous?.scale ?? previous?.zoom?.scale;
-    const scale =
-      typeof recordedScale === 'number' && Number.isFinite(recordedScale) && recordedScale > 0
-        ? recordedScale
-        : 1;
+    const hasOffsetX = typeof view?.offsetX === 'number';
+    const hasOffsetY = typeof view?.offsetY === 'number';
+    const offsetX = hasOffsetX && finiteNumber(view?.offsetX) ? view.offsetX : 0;
+    const offsetY = hasOffsetY && finiteNumber(view?.offsetY) ? view.offsetY : 0;
+    const recordedScale = view?.scale ?? view?.zoom?.scale;
+    const scale = positiveNumber(recordedScale) ? recordedScale : 1;
     scrollScope.scrollToPage({
       pageNumber: page,
       behavior: 'instant',

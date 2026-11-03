@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
-import type { Theme } from '../shared/protocol';
+import type { PersistedViewState, Theme } from '../shared/protocol';
 import { PageState } from './pageState';
 import { ReloadController } from './reloadController';
 import { WATCH_GLOB, isSameWatchTarget } from './watchTarget';
@@ -92,14 +92,16 @@ export class PdfPreviewProvider implements vscode.CustomReadonlyEditorProvider {
 
     const uri = document.uri;
     const key = uri.toString();
+    const initialViewState: PersistedViewState = { v: 1, page: 1, x: 0, y: 0 };
     const session = new WebviewSession({
       uri: key,
       name: fileNameOf(uri),
-      initialPage: this.pageState.get(key, 1),
+      initialViewState,
       readFile: () => Promise.resolve(vscode.workspace.fs.readFile(uri)),
       pageState: {
         get: (pageKey, fallback) => this.pageState.get(pageKey, fallback),
-        set: (pageKey, page) => this.pageState.set(pageKey, page),
+        set: (pageKey, state) => this.pageState.set(pageKey, state),
+        flush: () => this.pageState.flush(),
       },
       theme: currentTheme,
       port: {

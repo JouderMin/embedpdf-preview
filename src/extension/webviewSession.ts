@@ -1,4 +1,9 @@
-import type { HostToWebview, Theme, WebviewToHost } from '../shared/protocol';
+import type {
+  HostToWebview,
+  PersistedViewState,
+  Theme,
+  WebviewToHost,
+} from '../shared/protocol';
 import { isWebviewToHost } from '../shared/protocol';
 import type { ReloadController, ReloadControllerOptions } from './reloadController';
 
@@ -11,11 +16,12 @@ export interface WebviewPort {
 export interface WebviewSessionOptions {
   readonly uri: string;
   readonly name: string;
-  readonly initialPage: number;
+  readonly initialViewState: PersistedViewState;
   readonly readFile: () => Promise<Uint8Array>;
   readonly pageState: {
-    get(key: string, fallback: number): number;
-    set(key: string, page: number): void;
+    get(key: string, fallback: PersistedViewState): PersistedViewState;
+    set(key: string, state: PersistedViewState): void;
+    flush?(): PromiseLike<void> | void;
   };
   readonly theme: () => Theme;
   readonly port: WebviewPort;
@@ -79,6 +85,8 @@ export class WebviewSession {
     this.subscription.dispose();
     this.controller?.dispose();
     this.controller = undefined;
+    // 编辑器关闭时把节流窗口里的最后状态落盘；不阻塞 dispose。
+    void this.options.pageState.flush?.();
   }
 
   private handleMessage(message: unknown): void {
@@ -90,8 +98,23 @@ export class WebviewSession {
         this.ready = true;
         void this.initialize();
         return;
-      case 'page':
-        this.options.pageState.set(this.options.uri, fromWebview.page);
+      case 'page': {
+        // 兼容旧 webview：只更新页码，保留已存坐标与缩放。
+        const current = this.options.pageState.get(
+          this.options.uri,
+          this.options.initialViewState,
+        );
+        this.options.pageState.set(this.options.uri, { ...current, page: fromWebview.page });
+        return;
+      }
+      case 'viewState':
+        this.options.pageState.set(this.options.uri, {
+          v: 1,
+          page: fromWebview.page,
+          x: fromWebview.x,
+          y: fromWebview.y,
+          zoom: fromWebview.zoom,
+        });
         return;
       case 'retry':
         void this.controller?.reloadNow();
@@ -107,12 +130,14 @@ export class WebviewSession {
   }
 
   private async initialize(): Promise<void> {
-    const { uri, name, initialPage, readFile, pageState } = this.options;
+    const { uri, name, initialViewState, readFile, pageState } = this.options;
+    const viewState = pageState.get(uri, initialViewState);
     this.post({
       type: 'init',
       uri,
       name,
-      page: pageState.get(uri, initialPage),
+      page: viewState.page,
+      viewState,
       theme: this.currentTheme,
     });
 
@@ -138,10 +163,15 @@ export class WebviewSession {
 
   private postDocument(bytes: Uint8Array, revision: number): void {
     if (this.disposed) return;
+    const viewState = this.options.pageState.get(
+      this.options.uri,
+      this.options.initialViewState,
+    );
     this.post({
       type: 'document',
       bytes: toArrayBuffer(bytes),
-      page: this.options.pageState.get(this.options.uri, this.options.initialPage),
+      page: viewState.page,
+      viewState,
       revision,
     });
   }

@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
+import type { PersistedViewState } from '../src/shared/protocol';
 import type { ReloadController, ReloadControllerOptions } from '../src/extension/reloadController';
 import {
   WebviewSession,
@@ -33,10 +34,11 @@ function makePort() {
 }
 
 function makePageState(initial = 5) {
-  return {
-    get: vi.fn(() => initial),
-    set: vi.fn(),
-  };
+  const state: PersistedViewState = { v: 1, page: initial, x: 0, y: 0 };
+  const get = vi.fn(() => state);
+  const set = vi.fn();
+  const flush = vi.fn(async () => {});
+  return { get, set, flush, state };
 }
 
 function makeFactory() {
@@ -76,7 +78,7 @@ function createSession(overrides: Partial<WebviewSessionOptions> = {}) {
   const session = new WebviewSession({
     uri,
     name: 'a b.pdf',
-    initialPage: 1,
+    initialViewState: { v: 1, page: 1, x: 0, y: 0 },
     readFile,
     pageState,
     theme: () => 'dark',
@@ -112,15 +114,58 @@ describe('WebviewSession 首次加载', () => {
       uri,
       name: 'a b.pdf',
       page: 5,
+      viewState: { v: 1, page: 5, x: 0, y: 0 },
       theme: 'dark',
     });
-    const document = messages[1] as { bytes: ArrayBuffer; page: number; revision: number };
+    const document = messages[1] as {
+      bytes: ArrayBuffer;
+      page: number;
+      viewState: { v: 1; page: number; x: number; y: number };
+      revision: number;
+    };
     expect(document.bytes.byteLength).toBe(4);
     expect(document.page).toBe(5);
+    expect(document.viewState).toEqual({ v: 1, page: 5, x: 0, y: 0 });
     expect(document.revision).toBe(1);
     expect(pageState.get).toHaveBeenCalled();
     expect(createController).toHaveBeenCalledTimes(1);
     expect(port.onMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test('init 与 document 带完整持久化状态', async () => {
+    const { port, pageState, messages } = createSession();
+    pageState.get.mockReturnValue({
+      v: 1,
+      page: 7,
+      x: 12,
+      y: -4,
+      zoom: { mode: 'fit-page', level: 1.25 },
+    });
+    port.emit({ type: 'ready' });
+    await flush();
+
+    expect(messages[0]).toMatchObject({
+      type: 'init',
+      page: 7,
+      viewState: {
+        v: 1,
+        page: 7,
+        x: 12,
+        y: -4,
+        zoom: { mode: 'fit-page', level: 1.25 },
+      },
+    });
+    expect(messages[1]).toMatchObject({
+      type: 'document',
+      page: 7,
+      viewState: {
+        v: 1,
+        page: 7,
+        x: 12,
+        y: -4,
+        zoom: { mode: 'fit-page', level: 1.25 },
+      },
+    });
   });
 
   test('重复 ready 只初始化一次', async () => {
@@ -148,16 +193,53 @@ describe('WebviewSession 首次加载', () => {
 });
 
 describe('WebviewSession 消息处理', () => {
-  test('page 消息写入页码，非法消息忽略', async () => {
+  test('viewState 写入完整状态，非法消息忽略', async () => {
     const { port, pageState } = createSession();
     port.emit({ type: 'ready' });
     await flush();
 
-    port.emit({ type: 'page', page: 4 });
-    expect(pageState.set).toHaveBeenCalledWith(uri, 4);
+    port.emit({
+      type: 'viewState',
+      page: 6,
+      x: 12,
+      y: -4,
+      zoom: { mode: 'fit-page', level: 1.25 },
+    });
+    expect(pageState.set).toHaveBeenCalledWith(uri, {
+      v: 1,
+      page: 6,
+      x: 12,
+      y: -4,
+      zoom: { mode: 'fit-page', level: 1.25 },
+    });
     expect(() => port.emit({ type: 'x' })).not.toThrow();
-    expect(() => port.emit({ type: 'page', page: '4' })).not.toThrow();
+    expect(() => port.emit({ type: 'viewState', page: '6', x: 0, y: 0 })).not.toThrow();
+    expect(() =>
+      port.emit({ type: 'viewState', page: 6, x: 0, y: 0, zoom: { mode: 'fit-height', level: 1 } }),
+    ).not.toThrow();
     expect(pageState.set).toHaveBeenCalledTimes(1);
+  });
+
+  test('旧 page 消息只更新页码并保留已存坐标与缩放', async () => {
+    const { port, pageState } = createSession();
+    pageState.get.mockReturnValue({
+      v: 1,
+      page: 5,
+      x: 10,
+      y: 20,
+      zoom: { mode: 'numeric', level: 1.5 },
+    });
+    port.emit({ type: 'ready' });
+    await flush();
+
+    port.emit({ type: 'page', page: 4 });
+    expect(pageState.set).toHaveBeenCalledWith(uri, {
+      v: 1,
+      page: 4,
+      x: 10,
+      y: 20,
+      zoom: { mode: 'numeric', level: 1.5 },
+    });
   });
 
   test('渲染失败交给状态机重读', async () => {
@@ -183,7 +265,7 @@ describe('WebviewSession 主题与文件事件', () => {
     port.emit({ type: 'ready' });
     await flush();
     messages.length = 0;
-    port.emit({ type: 'page', page: 3 });
+    port.emit({ type: 'viewState', page: 3, x: 0, y: 0 });
     session.setTheme('light');
     expect(messages).toHaveLength(1);
     expect(messages[0]).toEqual({ type: 'theme', theme: 'light' });
@@ -204,14 +286,15 @@ describe('WebviewSession 主题与文件事件', () => {
 });
 
 describe('WebviewSession dispose', () => {
-  test('dispose 释放消息订阅与 controller', async () => {
+  test('dispose 释放消息订阅、controller，并 flush 待写状态', async () => {
     const { session, port, controllers, pageState } = createSession();
     port.emit({ type: 'ready' });
     await flush();
     session.dispose();
     expect(controllers[0].dispose).toHaveBeenCalledTimes(1);
     expect(port.onMessage).toHaveBeenCalledTimes(1);
-    port.emit({ type: 'page', page: 9 });
+    expect(pageState.flush).toHaveBeenCalledTimes(1);
+    port.emit({ type: 'viewState', page: 9, x: 0, y: 0, zoom: { mode: 'numeric', level: 1 } });
     expect(pageState.set).not.toHaveBeenCalled();
   });
 });
