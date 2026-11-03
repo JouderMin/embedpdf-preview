@@ -14,6 +14,7 @@ import {
 } from './loadDocument';
 import { prepareViewerAssets, releaseViewerAssets, type ViewerAssets } from './viewerAssets';
 import { createViewerConfig } from './viewerConfig';
+import { bindViewStateLifecycle, ViewStateReporter } from './viewStateReporter';
 
 type DocumentMessage = Extract<HostToWebview, { type: 'document' }>;
 type ViewerProps = Parameters<typeof PDFViewer>[0];
@@ -64,48 +65,45 @@ export function App() {
   const nameRef = useRef('document.pdf');
   const cleanupsRef = useRef<Array<() => void>>([]);
   const processRef = useRef<() => Promise<void>>(async () => undefined);
-  const reportTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // 视图状态上报器在首次渲染时创建，capture 只读 refs，跨渲染稳定。
+  const reporterRef = useRef<ViewStateReporter | undefined>(undefined);
+  if (!reporterRef.current) {
+    reporterRef.current = new ViewStateReporter({
+      // 比 300ms 更短，减少页面销毁前暴露窗口；pagehide/visibilitychange 仍会立即 flush。
+      debounceMs: 100,
+      capture: () => {
+        if (processingRef.current) {
+          return undefined;
+        }
+        const current = currentRef.current;
+        const scroll = scrollRef.current;
+        if (!current || !scroll) {
+          return undefined;
+        }
+        const persisted = toPersistedViewState(
+          captureViewState(scroll, zoomRef.current, current.documentId, current.page),
+        );
+        if (!persisted) {
+          // 读不到实际缩放比例时不上报，避免把已有状态覆盖成 100%/页首。
+          return undefined;
+        }
+        current.page = persisted.page;
+        return {
+          page: persisted.page,
+          x: persisted.x,
+          y: persisted.y,
+          zoom: persisted.zoom,
+        };
+      },
+      post: (message) => postToHost(message),
+    });
+  }
+  const reporter = reporterRef.current;
 
   const reportRender = (message: string) => {
     setError({ kind: 'render', message });
     postToHost({ type: 'error', kind: 'render', message });
-  };
-
-  const reportViewState = () => {
-    if (processingRef.current) {
-      return;
-    }
-    const current = currentRef.current;
-    const scroll = scrollRef.current;
-    if (!current || !scroll) {
-      return;
-    }
-    const persisted = toPersistedViewState(
-      captureViewState(scroll, zoomRef.current, current.documentId, current.page),
-    );
-    if (!persisted) {
-      // 读不到实际缩放比例时不上报，避免把已有状态覆盖成 100%/页首。
-      return;
-    }
-    current.page = persisted.page;
-    postToHost({
-      type: 'viewState',
-      page: persisted.page,
-      x: persisted.x,
-      y: persisted.y,
-      zoom: persisted.zoom,
-    });
-  };
-
-  // 页码/缩放/滚动共用 300ms 尾部去抖；滚动停止或缩放结束后只发最后状态。
-  const scheduleViewStateReport = () => {
-    if (reportTimerRef.current !== undefined) {
-      clearTimeout(reportTimerRef.current);
-    }
-    reportTimerRef.current = setTimeout(() => {
-      reportTimerRef.current = undefined;
-      reportViewState();
-    }, 300);
   };
 
   const processPending = async (): Promise<void> => {
@@ -145,7 +143,7 @@ export function App() {
           });
           currentRef.current = { documentId: result.documentId, page: result.page };
           setError(null);
-          scheduleViewStateReport();
+          reporter.schedule();
         } catch (loadError) {
           reportRender(errorMessage(loadError));
         }
@@ -175,7 +173,7 @@ export function App() {
       const current = currentRef.current;
       if (current && event.documentId === current.documentId) {
         current.page = event.pageNumber;
-        scheduleViewStateReport();
+        reporter.schedule();
       }
     });
     if (pageSubscription) {
@@ -185,7 +183,7 @@ export function App() {
     const scrollSubscription = scrollRef.current.onScroll?.((event) => {
       const current = currentRef.current;
       if (current && event.documentId === current.documentId) {
-        scheduleViewStateReport();
+        reporter.schedule();
       }
     });
     if (scrollSubscription) {
@@ -195,7 +193,7 @@ export function App() {
     const zoomSubscription = zoomRef.current?.onZoomChange?.((event) => {
       const current = currentRef.current;
       if (current && event.documentId === current.documentId) {
-        scheduleViewStateReport();
+        reporter.schedule();
       }
     });
     if (zoomSubscription) {
@@ -239,22 +237,24 @@ export function App() {
 
     return () => {
       unsubscribe();
-      if (reportTimerRef.current !== undefined) {
-        clearTimeout(reportTimerRef.current);
-        reportTimerRef.current = undefined;
-        // 卸载前补发最后一次待去抖的状态，best-effort，失败不影响卸载。
-        try {
-          reportViewState();
-        } catch {
-          // 忽略卸载期的读取/发送失败。
-        }
+      // 卸载前补发最后一次待去抖的状态，best-effort，失败不影响卸载。
+      try {
+        reporter.flushPending();
+      } catch {
+        // 忽略卸载期的读取/发送失败。
       }
+      reporter.dispose();
       for (const cleanup of cleanupsRef.current) {
         cleanup();
       }
       cleanupsRef.current = [];
     };
   }, []);
+
+  // 编辑器被销毁时 React cleanup 不保证执行；pagehide/visibilitychange 是最后兜底。
+  useEffect(() => {
+    return bindViewStateLifecycle(reporter, window, document);
+  }, [reporter]);
 
   // 主线程预取 wasm 与字体，换成 blob URL 后再交给 worker 引擎。
   // worker 内直接 fetch webview 资源会卡在 service worker 超时（见 viewerAssets.ts）。

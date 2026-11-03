@@ -661,6 +661,39 @@ describe('跨重启的完整视图状态', () => {
     expect(scrollToPage).toHaveBeenCalledWith({ pageNumber: 2, behavior: 'instant' });
   });
 
+  test('automatic 模式保留 mode，level 记录实际 scale', async () => {
+    const metrics: ScrollMetricsLike = {
+      currentPage: 3,
+      scrollOffset: { x: 0, y: 0 },
+      pageVisibilityMetrics: [
+        { pageNumber: 3, viewportX: 0, viewportY: 20, scaled: { pageX: 0, pageY: 270, scale: 1.25 } },
+      ],
+    };
+    const { manager, scroll, scrollToPage } = setup({ totalPages: 10, currentPage: 3, metrics });
+    const { zoom, requestZoom } = setupZoom('automatic', 1.25);
+    const captured = captureViewState(scroll, zoom, 'old', 3);
+    const persisted = toPersistedViewState(captured);
+
+    expect(persisted).toMatchObject({
+      page: 3,
+      y: 200,
+      zoom: { mode: 'automatic', level: 1.25 },
+    });
+
+    await apply(manager, scroll, {
+      restore: fromPersistedViewState(persisted!),
+      targetPage: 1,
+      zoom,
+    });
+
+    expect(requestZoom).toHaveBeenCalledWith('automatic');
+    expect(scrollToPage).toHaveBeenCalledWith({
+      pageNumber: 3,
+      behavior: 'instant',
+      pageCoordinates: { x: 0, y: 200 },
+    });
+  });
+
   test('没有 restore 时保持原行为：按 targetPage 跳转且不传坐标', async () => {
     const { manager, scroll, scrollToPage } = setup({ totalPages: 10 });
 

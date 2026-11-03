@@ -116,6 +116,7 @@ describe('跨实例（模拟 VS Code 重启）的完整状态', () => {
       y: 150,
       zoom: { mode: 'numeric', level: 2 },
     });
+    expect(persisted?.v).toBe(1);
     expect(persisted?.y).not.toBe(300);
     expect(persisted?.zoom?.level).not.toBe(1.5);
 
